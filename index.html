@@ -68,7 +68,7 @@
   </div>
 
   <!-- supabase-js CDN (v2) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // -------------------- CONFIG --------------------
     // Replace these with your Supabase project's values
@@ -77,7 +77,7 @@
     const STORAGE_BUCKET = 'files'; // name of bucket in Supabase Storage
     // ------------------------------------------------
 
-    const supabase = supabaseLib.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const $email = document.getElementById('email');
     const $password = document.getElementById('password');
