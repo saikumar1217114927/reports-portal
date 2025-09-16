@@ -20,7 +20,6 @@
     .actions a{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.03);text-decoration:none;color:var(--white);font-size:13px}
     .top-actions{display:flex;gap:8px;align-items:center}
     .hint{font-size:12px;color:var(--muted);margin-top:8px}
-    .folder{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;background:var(--accent);color:#fff;cursor:pointer}
     @media(max-width:880px){.wrap{grid-template-columns:1fr;}}
   </style>
 </head>
@@ -44,7 +43,7 @@
       <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
       <div class="small">Notes:
         <ul style="margin:6px 0 0 18px;padding:0;color:var(--muted)">
-          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator.</li>
+          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator (I can show that).</li>
           <li>Files are listed from the bucket called <code>files</code>. Create that in Supabase Storage.</li>
         </ul>
       </div>
@@ -53,23 +52,8 @@
     <section>
       <div class="top-actions" style="justify-content:space-between;align-items:center">
         <div>
-          <h1 style="font-size:18px">Folders</h1>
-          <div class="small">Select a folder to browse files</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="folderSearch" type="text" placeholder="Search folders" />
-          <button id="btnFolderRefresh">Refresh Folders</button>
-        </div>
-      </div>
-
-      <div class="files" id="foldersList">
-        <!-- folders will appear here -->
-      </div>
-
-      <div class="top-actions" style="justify-content:space-between;align-items:center;margin-top:20px">
-        <div>
           <h1 style="font-size:18px">Files</h1>
-          <div class="small">Browse files in selected folder</div>
+          <div class="small">Browse files available to authenticated users</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
           <input id="search" type="text" placeholder="Search files by name" />
@@ -83,16 +67,17 @@
     </section>
   </div>
 
-  <!-- supabase-js CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/main.umd.min.js"></script>
+  <!-- supabase-js CDN (v2) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // -------------------- CONFIG --------------------
+    // Replace these with your Supabase project's values
     const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
-    const STORAGE_BUCKET = 'files';
+    const STORAGE_BUCKET = 'files'; // name of bucket in Supabase Storage
     // ------------------------------------------------
 
-    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const $email = document.getElementById('email');
     const $password = document.getElementById('password');
@@ -100,13 +85,9 @@
     const $btnSignIn = document.getElementById('btnSignIn');
     const $btnSignUp = document.getElementById('btnSignUp');
     const $btnSignOut = document.getElementById('btnSignOut');
-    const $foldersList = document.getElementById('foldersList');
     const $filesList = document.getElementById('filesList');
     const $search = document.getElementById('search');
     const $btnRefresh = document.getElementById('btnRefresh');
-    const $folderSearch = document.getElementById('folderSearch');
-    const $btnFolderRefresh = document.getElementById('btnFolderRefresh');
-    let selectedFolder = null;
 
     async function updateUiForUser(user) {
       if (user) {
@@ -114,17 +95,17 @@
         $btnSignOut.style.display = 'inline-block';
         $btnSignIn.style.display = 'none';
         $btnSignUp.style.display = 'none';
-        await loadFolders();
+        await loadFiles();
       } else {
         $status.textContent = 'not signed in';
         $btnSignOut.style.display = 'none';
         $btnSignIn.style.display = 'inline-block';
         $btnSignUp.style.display = 'inline-block';
-        $foldersList.innerHTML = '<div class="meta">Sign in to see folders.</div>';
         $filesList.innerHTML = '<div class="meta">Sign in to see files.</div>';
       }
     }
 
+    // wire auth state
     supabase.auth.getUser().then(({data}) => {
       updateUiForUser(data.user);
     });
@@ -139,6 +120,7 @@
       if (!email || !password) return alert('enter email and password');
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) return alert('Sign in error: ' + error.message);
+      // signed in; onAuthStateChange will update UI
     });
 
     $btnSignUp.addEventListener('click', async () => {
@@ -156,73 +138,34 @@
       $password.value = '';
     });
 
-    async function loadFolders() {
-      $foldersList.innerHTML = '<div class="meta">Loading folders…</div>';
-      try {
-        const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
-        if (error) {
-          $foldersList.innerHTML = '<div class="meta">Error listing folders: ' + error.message + '</div>';
-          console.error('Load folders error:', error);
-          return;
-        }
-        const folders = data.filter(item => !item.name.includes('.')).map(item => item.name);
-        const q = $folderSearch.value.trim().toLowerCase();
-        const filteredFolders = q ? folders.filter(f => f.toLowerCase().includes(q)) : folders;
-        if (filteredFolders.length === 0) {
-          $foldersList.innerHTML = '<div class="meta">No folders found.</div>';
-          $filesList.innerHTML = '<div class="meta">Select a folder to see files.</div>';
-          return;
-        }
-        $foldersList.innerHTML = '';
-        filteredFolders.forEach(folder => {
-          const el = document.createElement('div');
-          el.className = 'folder';
-          el.textContent = folder;
-          el.addEventListener('click', () => {
-            selectedFolder = folder;
-            loadFiles();
-          });
-          $foldersList.appendChild(el);
-        });
-      } catch (err) {
-        $foldersList.innerHTML = '<div class="meta">Unexpected error: ' + err.message + '</div>';
-        console.error('Unexpected error:', err);
-      }
-    }
 
     async function loadFiles() {
-      if (!selectedFolder) {
-        $filesList.innerHTML = '<div class="meta">Select a folder to see files.</div>';
+      $filesList.innerHTML = '<div class="meta">Loading files…</div>';
+      // list objects from the bucket root
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
+      if (error) {
+        $filesList.innerHTML = '<div class="meta">Error listing files: ' + error.message + '</div>';
         return;
       }
-      $filesList.innerHTML = '<div class="meta">Loading files…</div>';
-      try {
-        const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(selectedFolder, { limit: 1000 });
-        if (error) {
-          $filesList.innerHTML = '<div class="meta">Error listing files: ' + error.message + '</div>';
-          console.error('Load files error:', error);
-          return;
-        }
-        if (!data || data.length === 0) {
-          $filesList.innerHTML = '<div class="meta">No files found in ' + selectedFolder + '.</div>';
-          return;
-        }
-        const items = data.map(f => {
-          const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(selectedFolder + '/' + f.name).data.publicUrl;
-          return { name: f.name, id: f.name, size: f.size, publicUrl };
-        });
-        renderFiles(items);
-      } catch (err) {
-        $filesList.innerHTML = '<div class="meta">Unexpected error: ' + err.message + '</div>';
-        console.error('Unexpected error:', err);
+      if (!data || data.length === 0) {
+        $filesList.innerHTML = '<div class="meta">No files found in bucket.</div>';
+        return;
       }
+
+      // transform into items with public URLs (bucket must be public)
+      const items = data.map(f => {
+        const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(f.name).data.publicUrl;
+        return { name: f.name, id: f.name, size: f.size, publicUrl };
+      });
+
+      renderFiles(items);
     }
 
     function renderFiles(items) {
       const q = $search.value.trim().toLowerCase();
       const filtered = q ? items.filter(i => i.name.toLowerCase().includes(q)) : items;
       if (filtered.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files match your search in ' + (selectedFolder || 'selected folder') + '.</div>';
+        $filesList.innerHTML = '<div class="meta">No files match your search.</div>';
         return;
       }
       $filesList.innerHTML = '';
@@ -235,18 +178,17 @@
             <div class="meta">${formatBytes(it.size)}</div>
           </div>
           <div class="actions">
-            <a href="${it.publicUrl}" rel="noopener">Open</a> <!-- Removed target="_blank" -->
+            <a href="${it.publicUrl}" target="_blank" rel="noopener">Open</a>
           </div>
         `;
         $filesList.appendChild(el);
       });
     }
 
-    $folderSearch.addEventListener('input', () => loadFolders().catch(() => {}));
-    $btnFolderRefresh.addEventListener('click', () => loadFolders().catch(() => {}));
-    $search.addEventListener('input', () => loadFiles().catch(() => {}));
-    $btnRefresh.addEventListener('click', () => loadFiles().catch(() => {}));
+    $search.addEventListener('input', () => loadFiles().catch(()=>{}));
+    $btnRefresh.addEventListener('click', () => loadFiles().catch(()=>{}));
 
+    // small helpers
     function formatBytes(bytes) {
       if (!bytes && bytes !== 0) return '';
       const sizes = ['B','KB','MB','GB','TB'];
@@ -255,6 +197,7 @@
       return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
     }
     function escapeHtml(s){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
   </script>
 </body>
 </html>
