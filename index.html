@@ -43,7 +43,7 @@
       <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
       <div class="small">Notes:
         <ul style="margin:6px 0 0 18px;padding:0;color:var(--muted)">
-          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator (I can show that).</li>
+          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator.</li>
           <li>Files are listed from the bucket called <code>files</code>. Create that in Supabase Storage.</li>
         </ul>
       </div>
@@ -62,19 +62,16 @@
       </div>
 
       <div class="files" id="filesList">
-        <!-- files will appear here -->
+        <!-- files/folders will appear here -->
       </div>
     </section>
   </div>
 
-  <!-- supabase-js CDN (v2) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // -------------------- CONFIG --------------------
     const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
     const STORAGE_BUCKET = 'files';
-    // ------------------------------------------------
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -88,7 +85,7 @@
     const $search = document.getElementById('search');
     const $btnRefresh = document.getElementById('btnRefresh');
 
-    let currentPath = ''; // track folder path
+    let currentPath = '';
 
     async function updateUiForUser(user) {
       if (user) {
@@ -112,7 +109,7 @@
     $btnSignIn.addEventListener('click', async () => {
       const email = $email.value.trim();
       const password = $password.value;
-      if (!email || !password) return alert('enter email and password');
+      if (!email || !password) return alert('Enter email and password');
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) return alert('Sign in error: ' + error.message);
     });
@@ -120,7 +117,7 @@
     $btnSignUp.addEventListener('click', async () => {
       const email = $email.value.trim();
       const password = $password.value;
-      if (!email || !password) return alert('enter email and password');
+      if (!email || !password) return alert('Enter email and password');
       const { error } = await supabase.auth.signUp({ email, password });
       if (error) return alert('Sign up error: ' + error.message);
       alert('Check your email to confirm (if required).');
@@ -134,10 +131,7 @@
 
     async function loadFiles() {
       $filesList.innerHTML = '<div class="meta">Loading…</div>';
-      const { data, error } = await supabase.storage
-        .from(STORAGE_BUCKET)
-        .list(currentPath, { limit: 1000 });
-
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(currentPath, { limit: 1000 });
       if (error) {
         $filesList.innerHTML = '<div class="meta">Error: ' + error.message + '</div>';
         return;
@@ -149,11 +143,11 @@
 
       const items = data.map(f => {
         if (f.metadata === null) {
-          return { type: 'folder', name: f.name, id: f.name };
+          return { type: 'folder', name: f.name };
         } else {
           const path = (currentPath ? currentPath + '/' : '') + f.name;
           const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl;
-          return { type: 'file', name: f.name, id: f.name, size: f.size, publicUrl };
+          return { type: 'file', name: f.name, size: f.size, publicUrl };
         }
       });
 
@@ -186,12 +180,8 @@
       filtered.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
-
         if (it.type === 'folder') {
-          el.innerHTML = `
-            <div style="font-weight:600">📁 ${escapeHtml(it.name)}</div>
-            <div class="meta">Folder</div>
-          `;
+          el.innerHTML = `<div style="font-weight:600">📁 ${escapeHtml(it.name)}</div><div class="meta">Folder</div>`;
           el.style.cursor = 'pointer';
           el.onclick = () => {
             currentPath = currentPath ? currentPath + '/' + it.name : it.name;
@@ -222,6 +212,7 @@
       const i = Math.floor(Math.log(bytes) / Math.log(1024));
       return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
     }
+
     function escapeHtml(s){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
   </script>
 </body>
