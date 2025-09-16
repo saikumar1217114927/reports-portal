@@ -157,15 +157,16 @@
       }
 
       const items = data.map(f => {
-        const isFolder = f.metadata && f.metadata['$content-type'] === null && !f.name.includes('.');
-        const publicUrl = isFolder ? '' : supabase.storage.from(STORAGE_BUCKET).getPublicUrl(`${path ? path + '/' : ''}${f.name}`).data.publicUrl;
+        const isFolder = f.id.endsWith('/') || (f.metadata && !f.metadata['$content-type'] && !f.name.includes('.'));
+        const fullPath = path ? `${path}/${f.name}` : f.name;
+        const publicUrl = isFolder ? '' : supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullPath).data.publicUrl;
         return { 
           name: f.name, 
-          id: f.name, 
+          id: f.id, 
           size: f.size || 0, 
           publicUrl,
           isFolder,
-          path: path ? `${path}/${f.name}` : f.name
+          path: fullPath
         };
       });
 
