@@ -161,7 +161,7 @@
       try {
         const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
         if (error) {
-          $foldersList.innerHTML = '<div class="meta'>Error listing folders: ' + error.message + '</div>';
+          $foldersList.innerHTML = '<div class="meta">Error listing folders: ' + error.message + '</div>';
           console.error('Load folders error:', error);
           return;
         }
@@ -222,7 +222,7 @@
       const q = $search.value.trim().toLowerCase();
       const filtered = q ? items.filter(i => i.name.toLowerCase().includes(q)) : items;
       if (filtered.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files match your search in ' + selectedFolder + '.</div>';
+        $filesList.innerHTML = '<div class="meta">No files match your search in ' + (selectedFolder || 'selected folder') + '.</div>';
         return;
       }
       $filesList.innerHTML = '';
@@ -235,7 +235,7 @@
             <div class="meta">${formatBytes(it.size)}</div>
           </div>
           <div class="actions">
-            <a href="${it.publicUrl}" target="_blank" rel="noopener">Open</a>
+            <a href="${it.publicUrl}" rel="noopener">Open</a> <!-- Removed target="_blank" -->
           </div>
         `;
         $filesList.appendChild(el);
