@@ -152,17 +152,17 @@
         return;
       }
       if (!data || data.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files found in bucket.</div>';
+        $filesList.innerHTML = '<div class="meta">This folder is empty.</div>';
         return;
       }
 
       const items = data.map(f => {
-        const isFolder = !f.name.includes('.');
+        const isFolder = f.metadata && f.metadata['$content-type'] === null && !f.name.includes('.');
         const publicUrl = isFolder ? '' : supabase.storage.from(STORAGE_BUCKET).getPublicUrl(`${path ? path + '/' : ''}${f.name}`).data.publicUrl;
         return { 
           name: f.name, 
           id: f.name, 
-          size: f.size, 
+          size: f.size || 0, 
           publicUrl,
           isFolder,
           path: path ? `${path}/${f.name}` : f.name
