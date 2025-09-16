@@ -17,9 +17,12 @@
     .search{display:flex;gap:8px;align-items:center;margin-bottom:12px}
     .file{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
     .meta{font-size:13px;color:var(--muted)}
-    .actions a{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.03);text-decoration:none;color:var(--white);font-size:13px}
+    .actions a,.actions button{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.03);text-decoration:none;color:var(--white);font-size:13px;border:0;cursor:pointer}
     .top-actions{display:flex;gap:8px;align-items:center}
     .hint{font-size:12px;color:var(--muted);margin-top:8px}
+    .path{display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:14px}
+    .path span{cursor:pointer;color:var(--accent)}
+    .path span:hover{text-decoration:underline}
     @media(max-width:880px){.wrap{grid-template-columns:1fr;}}
   </style>
 </head>
@@ -60,21 +63,21 @@
           <button id="btnRefresh">Refresh</button>
         </div>
       </div>
-
+      <div class="path" id="pathNav">
+        <span data-path="">Root</span>
+      </div>
       <div class="files" id="filesList">
         <!-- files will appear here -->
       </div>
     </section>
   </div>
 
-  <!-- supabase-js CDN (v2) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // -------------------- CONFIG --------------------
-    // Replace these with your Supabase project's values
     const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
-    const STORAGE_BUCKET = 'files'; // name of bucket in Supabase Storage
+    const STORAGE_BUCKET = 'files';
     // ------------------------------------------------
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -88,6 +91,9 @@
     const $filesList = document.getElementById('filesList');
     const $search = document.getElementById('search');
     const $btnRefresh = document.getElementById('btnRefresh');
+    const $pathNav = document.getElementById('pathNav');
+
+    let currentPath = '';
 
     async function updateUiForUser(user) {
       if (user) {
@@ -95,17 +101,18 @@
         $btnSignOut.style.display = 'inline-block';
         $btnSignIn.style.display = 'none';
         $btnSignUp.style.display = 'none';
-        await loadFiles();
+        await loadFiles(currentPath);
       } else {
         $status.textContent = 'not signed in';
         $btnSignOut.style.display = 'none';
         $btnSignIn.style.display = 'inline-block';
         $btnSignUp.style.display = 'inline-block';
         $filesList.innerHTML = '<div class="meta">Sign in to see files.</div>';
+        $pathNav.innerHTML = '<span data-path="">Root</span>';
+        currentPath = '';
       }
     }
 
-    // wire auth state
     supabase.auth.getUser().then(({data}) => {
       updateUiForUser(data.user);
     });
@@ -120,7 +127,6 @@
       if (!email || !password) return alert('enter email and password');
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) return alert('Sign in error: ' + error.message);
-      // signed in; onAuthStateChange will update UI
     });
 
     $btnSignUp.addEventListener('click', async () => {
@@ -138,11 +144,9 @@
       $password.value = '';
     });
 
-
-    async function loadFiles() {
+    async function loadFiles(path = '') {
       $filesList.innerHTML = '<div class="meta">Loading files…</div>';
-      // list objects from the bucket root
-      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(path, { limit: 1000 });
       if (error) {
         $filesList.innerHTML = '<div class="meta">Error listing files: ' + error.message + '</div>';
         return;
@@ -152,13 +156,38 @@
         return;
       }
 
-      // transform into items with public URLs (bucket must be public)
       const items = data.map(f => {
-        const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(f.name).data.publicUrl;
-        return { name: f.name, id: f.name, size: f.size, publicUrl };
+        const isFolder = !f.name.includes('.');
+        const publicUrl = isFolder ? '' : supabase.storage.from(STORAGE_BUCKET).getPublicUrl(`${path ? path + '/' : ''}${f.name}`).data.publicUrl;
+        return { 
+          name: f.name, 
+          id: f.name, 
+          size: f.size, 
+          publicUrl,
+          isFolder,
+          path: path ? `${path}/${f.name}` : f.name
+        };
       });
 
+      updatePathNav(path);
       renderFiles(items);
+    }
+
+    function updatePathNav(path) {
+      const parts = path ? path.split('/') : [];
+      let current = '';
+      $pathNav.innerHTML = '<span data-path="">Root</span>';
+      parts.forEach((part, i) => {
+        current = i === 0 ? part : `${current}/${part}`;
+        $pathNav.innerHTML += ` / <span data-path="${current}">${escapeHtml(part)}</span>`;
+      });
+      
+      $pathNav.querySelectorAll('span').forEach(span => {
+        span.addEventListener('click', () => {
+          currentPath = span.dataset.path;
+          loadFiles(currentPath).catch(() => {});
+        });
+      });
     }
 
     function renderFiles(items) {
@@ -174,21 +203,29 @@
         el.className = 'file';
         el.innerHTML = `
           <div>
-            <div style="font-weight:600">${escapeHtml(it.name)}</div>
-            <div class="meta">${formatBytes(it.size)}</div>
+            <div style="font-weight:600">${escapeHtml(it.name)}${it.isFolder ? '/' : ''}</div>
+            <div class="meta">${it.isFolder ? 'Folder' : formatBytes(it.size)}</div>
           </div>
           <div class="actions">
-            <a href="${it.publicUrl}" target="_blank" rel="noopener">Open</a>
+            ${it.isFolder 
+              ? `<button data-path="${it.path}">Open</button>` 
+              : `<a href="${it.publicUrl}" target="_blank" rel="noopener">Open</a>`
+            }
           </div>
         `;
+        if (it.isFolder) {
+          el.querySelector('button').addEventListener('click', () => {
+            currentPath = it.path;
+            loadFiles(currentPath).catch(() => {});
+          });
+        }
         $filesList.appendChild(el);
       });
     }
 
-    $search.addEventListener('input', () => loadFiles().catch(()=>{}));
-    $btnRefresh.addEventListener('click', () => loadFiles().catch(()=>{}));
+    $search.addEventListener('input', () => loadFiles(currentPath).catch(() => {}));
+    $btnRefresh.addEventListener('click', () => loadFiles(currentPath).catch(() => {}));
 
-    // small helpers
     function formatBytes(bytes) {
       if (!bytes && bytes !== 0) return '';
       const sizes = ['B','KB','MB','GB','TB'];
@@ -196,8 +233,9 @@
       const i = Math.floor(Math.log(bytes) / Math.log(1024));
       return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
     }
-    function escapeHtml(s){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
-
+    function escapeHtml(s) { 
+      return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); 
+    }
   </script>
 </body>
 </html>
