@@ -43,7 +43,7 @@
       <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
       <div class="small">Notes:
         <ul style="margin:6px 0 0 18px;padding:0;color:var(--muted)">
-          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator (I can show that).</li>
+          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator.</li>
           <li>Files are listed from the bucket called <code>files</code>. Create that in Supabase Storage.</li>
         </ul>
       </div>
@@ -62,20 +62,16 @@
       </div>
 
       <div class="files" id="filesList">
-        <!-- files will appear here -->
+        <!-- files/folders will appear here -->
       </div>
     </section>
   </div>
 
-  <!-- supabase-js CDN (v2) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // -------------------- CONFIG --------------------
-    // Replace these with your Supabase project's values
     const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
-    const STORAGE_BUCKET = 'files'; // name of bucket in Supabase Storage
-    // ------------------------------------------------
+    const STORAGE_BUCKET = 'files';
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -88,6 +84,8 @@
     const $filesList = document.getElementById('filesList');
     const $search = document.getElementById('search');
     const $btnRefresh = document.getElementById('btnRefresh');
+
+    let currentPath = '';
 
     async function updateUiForUser(user) {
       if (user) {
@@ -105,31 +103,24 @@
       }
     }
 
-    // wire auth state
-    supabase.auth.getUser().then(({data}) => {
-      updateUiForUser(data.user);
-    });
-
-    supabase.auth.onAuthStateChange((event, session) => {
-      updateUiForUser(session?.user || null);
-    });
+    supabase.auth.getUser().then(({data}) => updateUiForUser(data.user));
+    supabase.auth.onAuthStateChange((event, session) => updateUiForUser(session?.user || null));
 
     $btnSignIn.addEventListener('click', async () => {
       const email = $email.value.trim();
       const password = $password.value;
-      if (!email || !password) return alert('enter email and password');
+      if (!email || !password) return alert('Enter email and password');
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) return alert('Sign in error: ' + error.message);
-      // signed in; onAuthStateChange will update UI
     });
 
     $btnSignUp.addEventListener('click', async () => {
       const email = $email.value.trim();
       const password = $password.value;
-      if (!email || !password) return alert('enter email and password');
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (!email || !password) return alert('Enter email and password');
+      const { error } = await supabase.auth.signUp({ email, password });
       if (error) return alert('Sign up error: ' + error.message);
-      alert('Check your email to confirm (if required by your Supabase settings).');
+      alert('Check your email to confirm (if required).');
     });
 
     $btnSignOut.addEventListener('click', async () => {
@@ -138,24 +129,26 @@
       $password.value = '';
     });
 
-
     async function loadFiles() {
-      $filesList.innerHTML = '<div class="meta">Loading files…</div>';
-      // list objects from the bucket root
-      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
+      $filesList.innerHTML = '<div class="meta">Loading…</div>';
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(currentPath, { limit: 1000 });
       if (error) {
-        $filesList.innerHTML = '<div class="meta">Error listing files: ' + error.message + '</div>';
+        $filesList.innerHTML = '<div class="meta">Error: ' + error.message + '</div>';
         return;
       }
       if (!data || data.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files found in bucket.</div>';
+        $filesList.innerHTML = '<div class="meta">Empty folder</div>';
         return;
       }
 
-      // transform into items with public URLs (bucket must be public)
       const items = data.map(f => {
-        const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(f.name).data.publicUrl;
-        return { name: f.name, id: f.name, size: f.size, publicUrl };
+        if (f.metadata === null) {
+          return { type: 'folder', name: f.name };
+        } else {
+          const path = (currentPath ? currentPath + '/' : '') + f.name;
+          const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl;
+          return { type: 'file', name: f.name, size: f.size, publicUrl };
+        }
       });
 
       renderFiles(items);
@@ -164,23 +157,47 @@
     function renderFiles(items) {
       const q = $search.value.trim().toLowerCase();
       const filtered = q ? items.filter(i => i.name.toLowerCase().includes(q)) : items;
+
       if (filtered.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files match your search.</div>';
+        $filesList.innerHTML = '<div class="meta">No matches</div>';
         return;
       }
+
       $filesList.innerHTML = '';
+
+      if (currentPath) {
+        const back = document.createElement('div');
+        back.className = 'file';
+        back.innerHTML = `<div style="font-weight:600">⬅️ .. (up)</div>`;
+        back.style.cursor = 'pointer';
+        back.onclick = () => {
+          currentPath = currentPath.split('/').slice(0, -1).join('/');
+          loadFiles();
+        };
+        $filesList.appendChild(back);
+      }
+
       filtered.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
-        el.innerHTML = `
-          <div>
-            <div style="font-weight:600">${escapeHtml(it.name)}</div>
-            <div class="meta">${formatBytes(it.size)}</div>
-          </div>
-          <div class="actions">
-            <a href="${it.publicUrl}" target="_blank" rel="noopener">Open</a>
-          </div>
-        `;
+        if (it.type === 'folder') {
+          el.innerHTML = `<div style="font-weight:600">📁 ${escapeHtml(it.name)}</div><div class="meta">Folder</div>`;
+          el.style.cursor = 'pointer';
+          el.onclick = () => {
+            currentPath = currentPath ? currentPath + '/' + it.name : it.name;
+            loadFiles();
+          };
+        } else {
+          el.innerHTML = `
+            <div>
+              <div style="font-weight:600">📄 ${escapeHtml(it.name)}</div>
+              <div class="meta">${formatBytes(it.size)}</div>
+            </div>
+            <div class="actions">
+              <a href="${it.publicUrl}" target="_blank" rel="noopener">Open</a>
+            </div>
+          `;
+        }
         $filesList.appendChild(el);
       });
     }
@@ -188,7 +205,6 @@
     $search.addEventListener('input', () => loadFiles().catch(()=>{}));
     $btnRefresh.addEventListener('click', () => loadFiles().catch(()=>{}));
 
-    // small helpers
     function formatBytes(bytes) {
       if (!bytes && bytes !== 0) return '';
       const sizes = ['B','KB','MB','GB','TB'];
@@ -196,8 +212,8 @@
       const i = Math.floor(Math.log(bytes) / Math.log(1024));
       return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
     }
-    function escapeHtml(s){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
 
+    function escapeHtml(s){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
   </script>
 </body>
 </html>
