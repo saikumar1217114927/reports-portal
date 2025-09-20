@@ -1,208 +1,990 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Supabase File Portal</title>
-  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>File Portal — Login + File List</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    .hidden { display: none; }
-    button { margin: 5px; padding: 5px 10px; }
-    #file-list li { margin: 4px 0; }
-    .progress-container { margin: 10px 0; }
-    .progress-bar { height: 10px; background: green; width: 0%; transition: width 1s linear; }
-    .file-actions button { margin-left: 10px; }
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--white:#e6eef6}
+    body{font-family:Inter,ui-sans-serif,system-ui,Arial;background:linear-gradient(180deg,#07101a, #081826);color:var(--white);min-height:100vh;margin:0;display:flex;align-items:center;justify-content:center;padding:24px}
+    .wrap{width:100%;max-width:980px;background:var(--card);border-radius:12px;box-shadow:0 10px 30px rgba(2,6,23,.6);padding:20px;display:grid;grid-template-columns:340px 1fr;gap:20px}
+    h1{margin:0 0 10px 0;font-size:20px}
+    label{display:block;font-size:13px;color:var(--muted);margin-top:12px}
+    input[type=text],input[type=password],input[type=email]{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02);color:var(--white)}
+    button{margin-top:14px;padding:10px 12px;border-radius:8px;border:0;background:var(--accent);color:#022;cursor:pointer;font-weight:600}
+    .small{font-size:13px;color:var(--muted);margin-top:10px}
+    .files{padding:12px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));height:560px;overflow:auto}
+    .search{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+    .file{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;transition:background 0.2s}
+    .folder{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;background:rgba(6,182,212,.1)}
+    .folder:hover{cursor:pointer;background:rgba(6,182,212,.2)}
+    .file:hover{background:rgba(6,182,212,.05)}
+    .meta{font-size:13px;color:var(--muted)}
+    .actions a{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.03);text-decoration:none;color:var(--white);font-size:13px;transition:background 0.2s}
+    .actions a:hover{background:rgba(255,255,255,.1)}
+    .top-actions{display:flex;gap:8px;align-items:center}
+    .breadcrumb{margin-bottom:12px;padding:8px;border-radius:8px;background:rgba(255,255,255,.02)}
+    .breadcrumb span{margin:0 4px;cursor:pointer;color:var(--accent)}
+    .breadcrumb span:hover{text-decoration:underline}
+    .hint{font-size:12px;color:var(--muted);margin-top:8px}
+    .session-timer{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:12px;color:var(--muted)}
+    .session-bar{background:rgba(255,255,255,.1);height:4px;border-radius:2px;overflow:hidden;margin-top:4px}
+    .session-progress{background:var(--accent);height:100%;transition:width 1s linear}
+    .session-warning{color:#f59e0b !important}
+    .session-expired{color:#ef4444 !important}
+    
+    /* Action button styles */
+    .action-btn {
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.05);
+      text-decoration: none;
+      color: var(--white);
+      font-size: 12px;
+      font-weight: 500;
+      transition: background 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .action-btn:hover {
+      background: rgba(255,255,255,0.1);
+    }
+    .actions.enhanced {
+      display: flex;
+      gap: 4px;
+    }
+    
+    @media(max-width:880px){.wrap{grid-template-columns:1fr;}}
   </style>
 </head>
 <body>
-  <h2>Supabase File Portal</h2>
-
-  <div id="auth-section">
-    <input id="email" type="email" placeholder="Email"><br>
-    <input id="password" type="password" placeholder="Password"><br>
-    <button onclick="signIn()">Sign In</button>
-    <button onclick="signUp()">Sign Up</button>
-  </div>
-
-  <div id="portal-section" class="hidden">
-    <button onclick="signOut()">Sign Out</button>
-    <div id="session-warning" class="hidden">
-      <p>Session will expire soon! Stay active.</p>
-      <div class="progress-container">
-        <div id="progress-bar" class="progress-bar"></div>
+  <div class="wrap">
+    <section>
+      <h1>Sign in / Sign up</h1>
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="you@example.com" />
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="••••••••" />
+        <div style="display:flex;gap:8px">
+          <button id="btnSignIn">Sign in</button>
+          <button id="btnSignUp">Create account</button>
+        </div>
+        <button id="btnSignOut" style="display:none;background:#ef4444;color:#fff">Sign out</button>
+        <div class="hint">This example uses <strong>Supabase</strong> (free tier). Replace the PROJECT_URL and ANON_KEY at the top of the script with yours.</div>
       </div>
-    </div>
-    <h3>Files</h3>
-    <div id="breadcrumb"></div>
-    <ul id="file-list"></ul>
+      <div class="small">Status: <span id="status">not signed in</span></div>
+      
+      <!-- Session Timer -->
+      <div id="sessionTimer" class="session-timer" style="display:none">
+        <span id="timerText">Session expires in 10:00</span>
+        <div class="session-bar">
+          <div id="sessionProgress" class="session-progress" style="width:100%"></div>
+        </div>
+      </div>
+      
+      <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
+      <div class="small">Notes:
+        <ul style="margin:6px 0 0 18px;padding:0;color:var(--muted)">
+          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator (I can show that).</li>
+          <li>Files are listed from the bucket called <code>files</code>. Create that in Supabase Storage.</li>
+          <li><strong>Session expires after 10 minutes of inactivity</strong> - you'll need to sign in again for security.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="top-actions" style="justify-content:space-between;align-items:center">
+        <div>
+          <h1 style="font-size:18px">Files</h1>
+          <div class="small" id="currentLocation">Browse folders to view files</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="search" type="text" placeholder="Search files by name" style="display:none" />
+          <button id="btnRefresh">Refresh</button>
+        </div>
+      </div>
+
+      <div id="breadcrumb" class="breadcrumb" style="display:none">
+        <span id="backToRoot" onclick="navigateToFolder('')">📁 Root</span>
+        <span id="currentPath"></span>
+      </div>
+
+      <div class="files" id="filesList">
+        <!-- files will appear here -->
+      </div>
+    </section>
   </div>
 
+  <!-- supabase-js CDN (v2) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // ---------------- Supabase Config ----------------
-    const SUPABASE_URL = "https://kplpwlfoyexfgfenewit.supabase.co"; // 🔄 replace with your project
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY"; // 🔄 replace with your anon key
-    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // -------------------- CONFIG --------------------
+    const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
+    const STORAGE_BUCKET = 'files';
+    
+    // Session timeout configuration
+    const SESSION_DURATION = 10 * 60 * 1000;
+    
+    // localStorage keys
+    const SESSION_START_KEY = 'fileportal_session_start';
+    const SESSION_ACTIVE_KEY = 'fileportal_session_active';
+    const FOLDER_CACHE_KEY = 'fileportal_folder_cache';
+    
+    let sessionStartTime = null;
+    let sessionTimeout = null;
+    let sessionInterval = null;
+    let folderCache = new Map();
+    // ------------------------------------------------
 
-    const BUCKET = "files";
-    const CACHE_KEY = "fileportal_folder_cache";
-    const SESSION_TIMEOUT = 10 * 60 * 1000; // 10 minutes
-    const SIGNED_URL_TTL = 60; // 60 seconds
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    let currentPath = "";
-    let sessionTimer, progressInterval, remainingTime;
+    // State for folder navigation
+    let currentPath = '';
+    let allFolders = [];
 
-    // ---------------- Auth ----------------
-    async function signIn() {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: document.getElementById("email").value,
-        password: document.getElementById("password").value,
-      });
-      if (error) return alert(error.message);
-      document.getElementById("auth-section").classList.add("hidden");
-      document.getElementById("portal-section").classList.remove("hidden");
-      resetSessionTimer();
-      listFiles();
-    }
+    const $email = document.getElementById('email');
+    const $password = document.getElementById('password');
+    const $status = document.getElementById('status');
+    const $btnSignIn = document.getElementById('btnSignIn');
+    const $btnSignUp = document.getElementById('btnSignUp');
+    const $btnSignOut = document.getElementById('btnSignOut');
+    const $filesList = document.getElementById('filesList');
+    const $search = document.getElementById('search');
+    const $btnRefresh = document.getElementById('btnRefresh');
+    const $breadcrumb = document.getElementById('breadcrumb');
+    const $currentPath = document.getElementById('currentPath');
+    const $currentLocation = document.getElementById('currentLocation');
+    
+    // Session timer elements
+    const $sessionTimer = document.getElementById('sessionTimer');
+    const $timerText = document.getElementById('timerText');
+    const $sessionProgress = document.getElementById('sessionProgress');
 
-    async function signUp() {
-      const { error } = await supabase.auth.signUp({
-        email: document.getElementById("email").value,
-        password: document.getElementById("password").value,
-      });
-      if (error) alert(error.message);
-      else alert("Check your email to confirm registration.");
-    }
-
-    async function signOut() {
-      await supabase.auth.signOut();
-      document.getElementById("auth-section").classList.remove("hidden");
-      document.getElementById("portal-section").classList.add("hidden");
-      stopSessionTimer();
-    }
-
-    // ---------------- Session Timer ----------------
-    function resetSessionTimer() {
-      stopSessionTimer();
-      remainingTime = SESSION_TIMEOUT;
-      sessionTimer = setInterval(() => {
-        remainingTime -= 1000;
-        updateProgressBar();
-        if (remainingTime <= 0) {
-          clearInterval(sessionTimer);
-          alert("Session expired, logging out.");
-          signOut();
+    // FIXED: Improved URL generation with proper path handling
+    function generateFileUrl(bucket, filePath) {
+      try {
+        // Clean the file path properly
+        let cleanPath = filePath.trim();
+        // Remove leading and trailing slashes, but preserve internal ones
+        cleanPath = cleanPath.replace(/^\/+/, '').replace(/\/+$/, '');
+        // Ensure no double slashes
+        cleanPath = cleanPath.replace(/\/+/g, '/');
+        
+        console.log('Generating URL for:', {
+          bucket,
+          originalPath: filePath,
+          cleanPath: cleanPath
+        });
+        
+        // Use Supabase's getPublicUrl method with the cleaned path
+        const { data } = supabase.storage
+          .from(bucket)
+          .getPublicUrl(cleanPath);
+        
+        // Validate the generated URL
+        if (data && data.publicUrl) {
+          console.log('Generated URL:', data.publicUrl);
+          return data.publicUrl;
+        } else {
+          throw new Error('No public URL generated by Supabase');
         }
-      }, 1000);
-    }
-
-    function stopSessionTimer() {
-      clearInterval(sessionTimer);
-      clearInterval(progressInterval);
-      document.getElementById("session-warning").classList.add("hidden");
-    }
-
-    function updateProgressBar() {
-      const warning = document.getElementById("session-warning");
-      const bar = document.getElementById("progress-bar");
-      if (remainingTime <= 60 * 1000) {
-        warning.classList.remove("hidden");
-        const percent = (remainingTime / 60000) * 100;
-        bar.style.width = percent + "%";
-      } else {
-        warning.classList.add("hidden");
+      } catch (error) {
+        console.error('Error generating file URL:', error);
+        
+        // FIXED: Better fallback URL construction
+        let cleanPath = filePath.trim().replace(/^\/+/, '').replace(/\/+$/, '').replace(/\/+/g, '/');
+        // Properly encode the path components (not the entire path)
+        const pathParts = cleanPath.split('/');
+        const encodedPath = pathParts.map(part => encodeURIComponent(part)).join('/');
+        
+        const fallbackUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodedPath}`;
+        console.log('Using fallback URL:', fallbackUrl);
+        return fallbackUrl;
       }
     }
 
-    // ---------------- File Browser ----------------
-    async function listFiles(path = "") {
-      currentPath = path;
+    // Helper to validate URL format
+    function isValidUrl(string) {
+      try {
+        const url = new URL(string);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+      } catch (_) {
+        return false;
+      }
+    }
 
-      const { data, error } = await supabase.storage
-        .from(BUCKET)
-        .list(path, { limit: 100, offset: 0 });
-
-      if (error) return alert(error.message);
-
-      renderBreadcrumb();
-      const list = document.getElementById("file-list");
-      list.innerHTML = "";
-
-      data.forEach((item) => {
-        const li = document.createElement("li");
-        if (item.metadata) {
-          // File
-          li.textContent = item.name;
-          const actions = document.createElement("span");
-          actions.className = "file-actions";
-
-          const openBtn = document.createElement("button");
-          openBtn.textContent = "👁️ Open";
-          openBtn.onclick = () => openFile(path + (path ? "/" : "") + item.name);
-          actions.appendChild(openBtn);
-
-          const dlBtn = document.createElement("button");
-          dlBtn.textContent = "⬇️ Download";
-          dlBtn.onclick = () => downloadFile(path + (path ? "/" : "") + item.name);
-          actions.appendChild(dlBtn);
-
-          li.appendChild(actions);
-        } else {
-          // Folder
-          const btn = document.createElement("button");
-          btn.textContent = "📂 " + item.name;
-          btn.onclick = () => listFiles(path + (path ? "/" : "") + item.name);
-          li.appendChild(btn);
+    // FIXED: Download helper that uses proper method
+    async function downloadFile(fileName, fileUrl) {
+      try {
+        console.log('Starting download for:', fileName);
+        
+        // Use Supabase download method for better reliability
+        const { data, error } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .download(fileUrl.replace(/^.*\/object\/public\//, ''));
+        
+        if (error) {
+          console.error('Download error:', error);
+          // Fallback to browser download
+          const link = document.createElement('a');
+          link.href = fileUrl;
+          link.download = fileName;
+          link.target = '_blank';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          return;
         }
-        list.appendChild(li);
+        
+        // Create blob and trigger download
+        const blob = new Blob([data], { type: 'application/octet-stream' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        
+        console.log('Download completed:', fileName);
+      } catch (err) {
+        console.error('Download failed:', err);
+        // Final fallback
+        const link = document.createElement('a');
+        link.href = fileUrl;
+        link.download = fileName;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    }
+
+    // Folder cache persistence helpers
+    function loadFolderCacheFromStorage() {
+      try {
+        const saved = localStorage.getItem(FOLDER_CACHE_KEY);
+        if (saved) {
+          const cacheData = JSON.parse(saved);
+          folderCache.clear();
+          
+          const oneHourAgo = Date.now() - (60 * 60 * 1000);
+          for (const [normalizedName, timestamp] of Object.entries(cacheData)) {
+            if (timestamp > oneHourAgo) {
+              folderCache.set(normalizedName, timestamp);
+            }
+          }
+          
+          console.log(`Restored folder cache: ${folderCache.size} entries`);
+        }
+      } catch (err) {
+        console.error('Failed to load folder cache from storage:', err);
+      }
+    }
+
+    function saveFolderCacheToStorage() {
+      try {
+        const cacheData = {};
+        for (const [key, timestamp] of folderCache.entries()) {
+          cacheData[key] = timestamp;
+        }
+        localStorage.setItem(FOLDER_CACHE_KEY, JSON.stringify(cacheData));
+      } catch (err) {
+        console.error('Failed to save folder cache to storage:', err);
+      }
+    }
+
+    // Session persistence helpers
+    function saveSessionStartTime(timestamp) {
+      try {
+        localStorage.setItem(SESSION_START_KEY, timestamp.toString());
+        localStorage.setItem(SESSION_ACTIVE_KEY, 'true');
+      } catch (err) {
+        console.error('Failed to save session to localStorage:', err);
+      }
+    }
+
+    function loadSessionStartTime() {
+      try {
+        const saved = localStorage.getItem(SESSION_START_KEY);
+        const isActive = localStorage.getItem(SESSION_ACTIVE_KEY) === 'true';
+        
+        if (saved && isActive) {
+          const timestamp = parseInt(saved);
+          const now = Date.now();
+          const elapsed = now - timestamp;
+          
+          if (elapsed < SESSION_DURATION) {
+            return timestamp;
+          } else {
+            clearSessionStorage();
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load session from localStorage:', err);
+      }
+      
+      return null;
+    }
+
+    function clearSessionStorage() {
+      try {
+        localStorage.removeItem(SESSION_START_KEY);
+        localStorage.removeItem(SESSION_ACTIVE_KEY);
+      } catch (err) {
+        console.error('Failed to clear session storage:', err);
+      }
+    }
+
+    function initializeSessionFromStorage() {
+      sessionStartTime = loadSessionStartTime();
+      
+      if (sessionStartTime) {
+        startSessionTimerFromStorage();
+      } else {
+        sessionStartTime = null;
+      }
+    }
+
+    // Helper to normalize folder names
+    function normalizeFolderName(name) {
+      return name.replace(/\/$/, '').trim().toLowerCase();
+    }
+
+    function isFolderCached(folderName) {
+      const normalized = normalizeFolderName(folderName);
+      const cached = folderCache.get(normalized);
+      
+      if (cached) {
+        const oneHourAgo = Date.now() - (60 * 60 * 1000);
+        if (cached > oneHourAgo) {
+          return true;
+        } else {
+          folderCache.delete(normalized);
+          saveFolderCacheToStorage();
+        }
+      }
+      
+      return false;
+    }
+
+    function addFolderToCache(folderName) {
+      const normalized = normalizeFolderName(folderName);
+      folderCache.set(normalized, Date.now());
+      saveFolderCacheToStorage();
+    }
+
+    function cleanFolderCache() {
+      const oneHourAgo = Date.now() - (60 * 60 * 1000);
+      let cleaned = 0;
+      
+      for (const [key, timestamp] of folderCache.entries()) {
+        if (timestamp < oneHourAgo) {
+          folderCache.delete(key);
+          cleaned++;
+        }
+      }
+      
+      if (cleaned > 0) {
+        saveFolderCacheToStorage();
+      }
+    }
+
+    async function updateUiForUser(user) {
+      if (!user) {
+        cleanFolderCache();
+      }
+      
+      if (user) {
+        $status.textContent = `signed in as ${user.email}`;
+        $btnSignOut.style.display = 'inline-block';
+        $btnSignIn.style.display = 'none';
+        $btnSignUp.style.display = 'none';
+        $breadcrumb.style.display = 'block';
+        $sessionTimer.style.display = 'block';
+        
+        if (!sessionStartTime) {
+          sessionStartTime = Date.now();
+          saveSessionStartTime(sessionStartTime);
+          startSessionTimer();
+        } else {
+          updateSessionDisplay();
+        }
+        
+        currentPath = '';
+        await loadRootFolders();
+      } else {
+        $status.textContent = 'not signed in';
+        $btnSignOut.style.display = 'none';
+        $btnSignIn.style.display = 'inline-block';
+        $btnSignUp.style.display = 'inline-block';
+        $breadcrumb.style.display = 'none';
+        $sessionTimer.style.display = 'none';
+        $currentLocation.textContent = 'Browse folders to view files';
+        $filesList.innerHTML = '<div class="meta">Sign in to see folders.</div>';
+        currentPath = '';
+        allFolders = [];
+        
+        sessionStartTime = null;
+        stopSessionTimer();
+        clearSessionStorage();
+        folderCache.clear();
+      }
+    }
+
+    function startSessionTimerFromStorage() {
+      if (sessionTimeout) clearTimeout(sessionTimeout);
+      if (sessionInterval) clearInterval(sessionInterval);
+      
+      const elapsed = Date.now() - sessionStartTime;
+      const remaining = SESSION_DURATION - elapsed;
+      
+      if (remaining > 0) {
+        sessionTimeout = setTimeout(() => {
+          handleSessionExpiry();
+        }, remaining);
+        
+        sessionInterval = setInterval(updateSessionDisplay, 1000);
+        
+        if (!document.hasSessionListeners) {
+          document.addEventListener('click', resetSessionTimer);
+          document.addEventListener('keypress', resetSessionTimer);
+          document.addEventListener('mousemove', resetSessionTimer);
+          document.hasSessionListeners = true;
+        }
+        
+        updateSessionDisplay();
+      } else {
+        handleSessionExpiry();
+      }
+    }
+
+    function startSessionTimer() {
+      if (sessionTimeout && sessionInterval) {
+        updateSessionDisplay();
+        return;
+      }
+      
+      if (sessionTimeout) clearTimeout(sessionTimeout);
+      if (sessionInterval) clearInterval(sessionInterval);
+      
+      sessionTimeout = setTimeout(() => {
+        handleSessionExpiry();
+      }, SESSION_DURATION);
+      
+      sessionInterval = setInterval(updateSessionDisplay, 1000);
+      
+      if (!document.hasSessionListeners) {
+        document.addEventListener('click', resetSessionTimer);
+        document.addEventListener('keypress', resetSessionTimer);
+        document.addEventListener('mousemove', resetSessionTimer);
+        document.hasSessionListeners = true;
+      }
+      
+      updateSessionDisplay();
+    }
+
+    function stopSessionTimer() {
+      if (sessionTimeout) {
+        clearTimeout(sessionTimeout);
+        sessionTimeout = null;
+      }
+      if (sessionInterval) {
+        clearInterval(sessionInterval);
+        sessionInterval = null;
+      }
+    }
+
+    function resetSessionTimer() {
+      if (!sessionStartTime) return;
+      
+      saveSessionStartTime(sessionStartTime);
+      
+      clearTimeout(sessionTimeout);
+      sessionTimeout = setTimeout(() => {
+        handleSessionExpiry();
+      }, SESSION_DURATION);
+      
+      updateSessionDisplay();
+    }
+
+    function updateSessionDisplay() {
+      if (!sessionStartTime) return;
+      
+      const elapsed = Date.now() - sessionStartTime;
+      const remaining = SESSION_DURATION - elapsed;
+      const progress = Math.max(0, (remaining / SESSION_DURATION) * 100);
+      
+      if (remaining <= 0) {
+        $timerText.textContent = 'Session expired - logging out...';
+        $timerText.className = 'session-expired';
+        $sessionProgress.style.width = '0%';
+        clearSessionStorage();
+        return;
+      }
+      
+      const minutes = Math.floor(remaining / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      const timeText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      
+      if (remaining <= 120000) {
+        $timerText.className = 'session-warning';
+        $timerText.textContent = `Session expires in ${timeText} ⚠️`;
+      } else {
+        $timerText.className = '';
+        $timerText.textContent = `Session expires in ${timeText}`;
+      }
+      
+      $sessionProgress.style.width = `${progress}%`;
+    }
+
+    async function handleSessionExpiry() {
+      sessionStartTime = null;
+      clearSessionStorage();
+      
+      if (confirm('Your session has expired for security reasons. You will be logged out. Click OK to continue.')) {
+        await supabase.auth.signOut();
+      } else {
+        await supabase.auth.signOut();
+      }
+    }
+
+    // Load root folders
+    async function loadRootFolders() {
+      $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
+      
+      try {
+        const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
+        if (error) {
+          $filesList.innerHTML = '<div class="meta">Error loading folders: ' + error.message + '</div>';
+          return;
+        }
+        
+        if (!data || data.length === 0) {
+          $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
+          return;
+        }
+
+        const seenFolders = new Set();
+        allFolders = [];
+        
+        console.log('=== ROOT FOLDER SCAN ===');
+        console.log('Raw root items:', data.map(item => item.name));
+        
+        for (const item of data) {
+          const normalizedName = normalizeFolderName(item.name);
+          
+          console.log(`\nChecking: "${item.name}" -> normalized: "${normalizedName}"`);
+          
+          if (isFolderCached(item.name)) {
+            console.log('  → SKIPPED: Already in persistent cache');
+            seenFolders.add(normalizedName);
+            allFolders.push({ 
+              name: normalizedName, 
+              fullPath: normalizedName,
+              originalName: item.name,
+              isFolder: true 
+            });
+            continue;
+          }
+          
+          if (seenFolders.has(normalizedName)) {
+            console.log('  → SKIPPED: Duplicate in current scan');
+            continue;
+          }
+          
+          let isFolder = false;
+          
+          if (item.name.endsWith('/')) {
+            isFolder = true;
+            console.log('  → DETECTED: Explicit folder');
+          } else {
+            const { data: contents, error: checkError } = await supabase.storage
+              .from(STORAGE_BUCKET)
+              .list(item.name, { limit: 1 });
+            
+            const contentCount = contents ? contents.length : 0;
+            console.log(`  → Contents: ${contentCount} items`);
+            
+            if (!checkError && contentCount > 0) {
+              isFolder = true;
+              console.log('  → DETECTED: Has contents (folder)');
+            }
+          }
+          
+          if (isFolder) {
+            seenFolders.add(normalizedName);
+            const displayName = normalizedName;
+            allFolders.push({ 
+              name: displayName, 
+              fullPath: displayName,
+              originalName: item.name,
+              isFolder: true 
+            });
+            addFolderToCache(item.name);
+            console.log(`  → ADDED: Folder "${displayName}"`);
+          }
+        }
+
+        console.log('Unique folders:', allFolders.map(f => f.name));
+
+        if (allFolders.length === 0) {
+          $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
+          return;
+        }
+
+        renderRootFolders(allFolders);
+        updateBreadcrumb('');
+      } catch (err) {
+        console.error('Error detecting folders:', err);
+        $filesList.innerHTML = '<div class="meta">Error loading folders.</div>';
+      }
+    }
+
+    // Navigate to folder
+    window.navigateToFolder = async function(path) {
+      currentPath = normalizeFolderName(path);
+      console.log('Navigating to:', currentPath);
+      await loadFolderContents(currentPath);
+      updateBreadcrumb(currentPath);
+    };
+
+    // Load folder contents with proper URL generation
+    async function loadFolderContents(path) {
+      $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
+      
+      console.log('Loading contents of:', path);
+      
+      const cleanPath = normalizeFolderName(path);
+      
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(cleanPath, { limit: 1000 });
+      if (error) {
+        $filesList.innerHTML = '<div class="meta">Error loading folder: ' + error.message + '</div>';
+        console.error('Load folder error:', error);
+        return;
+      }
+      
+      console.log('Raw folder contents:', data?.map(item => item.name) || []);
+      
+      if (!data || data.length === 0) {
+        $filesList.innerHTML = '<div class="meta">This folder is empty.</div>';
+        return;
+      }
+
+      const seenItems = new Set();
+      const folders = [];
+      const files = [];
+      
+      for (const item of data) {
+        const normalizedItemName = normalizeFolderName(item.name);
+        
+        console.log(`Processing: "${item.name}"`);
+        
+        if (seenItems.has(normalizedItemName)) {
+          console.log('  → SKIPPED: Duplicate');
+          continue;
+        }
+        
+        seenItems.add(normalizedItemName);
+        
+        if (item.name.endsWith('/')) {
+          const folderName = normalizeFolderName(item.name);
+          folders.push({ 
+            name: folderName, 
+            fullPath: `${cleanPath ? cleanPath + '/' : ''}${folderName}`.replace(/\/+/g, '/'),
+            originalName: item.name
+          });
+          console.log('  → ADDED: Subfolder');
+        } else {
+          const subfolderPath = `${cleanPath ? cleanPath + '/' : ''}${item.name}`;
+          const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(subfolderPath, { limit: 1 });
+          
+          if (contents && contents.length > 0) {
+            folders.push({ 
+              name: item.name, 
+              fullPath: subfolderPath.replace(/\/+/g, '/'),
+              originalName: item.name
+            });
+            console.log('  → ADDED: Nested subfolder');
+          } else {
+            // This is a file - generate proper URL
+            const fullFilePath = `${cleanPath ? cleanPath + '/' : ''}${item.name}`.replace(/\/+/g, '/');
+            
+            // Use the improved URL generation function
+            const publicUrl = generateFileUrl(STORAGE_BUCKET, fullFilePath);
+            
+            console.log(`  → ADDED: File "${item.name}"`);
+            console.log(`  → Full path: "${fullFilePath}"`);
+            console.log(`  → Generated URL: "${publicUrl}"`);
+            
+            files.push({ 
+              name: item.name, 
+              fullPath: fullFilePath, 
+              size: 0,
+              publicUrl: publicUrl 
+            });
+          }
+        }
+      }
+
+      console.log('Folders:', folders.map(f => f.name));
+      console.log('Files:', files.map(f => f.name));
+
+      renderFolderContents(folders, files, cleanPath);
+    }
+
+    function renderRootFolders(folders) {
+      $filesList.innerHTML = '';
+      
+      if (folders.length === 0) {
+        $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
+        return;
+      }
+
+      const folderCount = document.createElement('div');
+      folderCount.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
+      folderCount.innerHTML = `<div style="font-weight:600;color:var(--accent)">📁 Folders (${folders.length})</div>`;
+      $filesList.appendChild(folderCount);
+
+      folders.forEach(folder => {
+        const el = document.createElement('div');
+        el.className = 'folder';
+        el.innerHTML = `
+          <div style="flex: 1;">
+            <div style="font-weight:600">📁 ${escapeHtml(folder.name)}</div>
+            <div class="meta">Folder</div>
+          </div>
+          <div class="actions">
+            <span style="color:var(--muted);font-size:12px">Click to enter</span>
+          </div>
+        `;
+        
+        el.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          navigateToFolder(folder.fullPath);
+        });
+        
+        el.querySelectorAll('*').forEach(child => {
+          child.style.pointerEvents = 'none';
+        });
+        
+        $filesList.appendChild(el);
       });
     }
 
-    function renderBreadcrumb() {
-      const container = document.getElementById("breadcrumb");
-      container.innerHTML = "";
-      const parts = currentPath.split("/").filter(Boolean);
-      let accum = "";
-      const rootBtn = document.createElement("button");
-      rootBtn.textContent = "🏠 Root";
-      rootBtn.onclick = () => listFiles("");
-      container.appendChild(rootBtn);
+    // FIXED: Completely rewritten file rendering with proper URL handling
+    function renderFolderContents(folders, files, currentPath) {
+      $filesList.innerHTML = '';
 
-      parts.forEach((p, i) => {
-        accum += (i > 0 ? "/" : "") + p;
-        const btn = document.createElement("button");
-        btn.textContent = p;
-        btn.onclick = () => listFiles(parts.slice(0, i + 1).join("/"));
-        container.appendChild(btn);
+      const locationInfo = document.createElement('div');
+      locationInfo.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
+      locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${escapeHtml(currentPath || 'Root')} (${files.length} files, ${folders.length} folders)</div>`;
+      $filesList.appendChild(locationInfo);
+
+      // Render folders first
+      folders.forEach(folder => {
+        const el = document.createElement('div');
+        el.className = 'folder';
+        el.innerHTML = `
+          <div style="flex: 1;">
+            <div style="font-weight:600">📁 ${escapeHtml(folder.name)}</div>
+            <div class="meta">Folder</div>
+          </div>
+          <div class="actions">
+            <span style="color:var(--muted);font-size:12px">Click to enter</span>
+          </div>
+        `;
+        
+        el.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          navigateToFolder(folder.fullPath);
+        });
+        
+        el.querySelectorAll('*').forEach(child => {
+          child.style.pointerEvents = 'none';
+        });
+        
+        $filesList.appendChild(el);
+      });
+
+      // FIXED: Enhanced file rendering with reliable URL handling
+      files.forEach(it => {
+        const el = document.createElement('div');
+        el.className = 'file';
+        
+        // Validate URL format
+        const isValid = isValidUrl(it.publicUrl);
+        console.log(`Rendering file: "${it.name}" with URL: "${it.publicUrl}" (Valid: ${isValid})`);
+        
+        el.innerHTML = `
+          <div style="flex: 1;">
+            <div style="font-weight:600">📄 ${escapeHtml(it.name)}</div>
+            <div class="meta">File</div>
+          </div>
+          <div class="actions enhanced">
+            <button class="action-btn" data-action="open" data-url="${escapeHtml(it.publicUrl)}" data-name="${escapeHtml(it.name)}">👁️ Open</button>
+            <button class="action-btn" data-action="download" data-url="${escapeHtml(it.publicUrl)}" data-name="${escapeHtml(it.name)}">⬇️ Download</button>
+          </div>
+        `;
+        
+        // FIXED: Use buttons instead of links for better control
+        el.querySelectorAll('.action-btn').forEach(btn => {
+          btn.addEventListener('click', async function(e) {
+            const action = this.dataset.action;
+            const fileName = this.dataset.name;
+            const fileUrl = this.dataset.url;
+            
+            console.log(`${action.toUpperCase()} clicked for:`, fileName);
+            console.log('URL:', fileUrl);
+            
+            if (!isValid) {
+              e.preventDefault();
+              console.error('Invalid URL format for file:', fileName);
+              alert(`Cannot access file: ${fileName}\n\nThe file URL is not properly formatted. Please contact support.`);
+              return;
+            }
+            
+            try {
+              if (action === 'download') {
+                // FIXED: Use the download helper function
+                await downloadFile(fileName, fileUrl);
+              } else {
+                // For open, use a clean approach
+                const tempLink = document.createElement('a');
+                tempLink.href = fileUrl;
+                tempLink.target = '_blank';
+                tempLink.rel = 'noopener noreferrer';
+                
+                // Trigger the click
+                tempLink.click();
+                console.log(`File opened successfully: ${fileName}`);
+              }
+              
+              // Show success feedback
+              const originalText = this.textContent;
+              this.textContent = '✅ Done';
+              this.style.background = 'rgba(34, 197, 94, 0.2)';
+              setTimeout(() => {
+                this.textContent = originalText;
+                this.style.background = '';
+              }, 1500);
+              
+            } catch (error) {
+              console.error(`Error ${action}ing file:`, error);
+              alert(`Error ${action}ing file: ${fileName}\n\nPlease try again or contact support.`);
+            }
+          });
+        });
+        
+        // Add hover effects
+        el.addEventListener('mouseenter', () => {
+          el.style.background = 'rgba(6,182,212,0.05)';
+        });
+        
+        el.addEventListener('mouseleave', () => {
+          el.style.background = '';
+        });
+        
+        $filesList.appendChild(el);
       });
     }
 
-    // ---------------- File Actions ----------------
-    async function openFile(filePath) {
-      const { data, error } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrl(filePath, SIGNED_URL_TTL);
+    function updateBreadcrumb(path = '') {
+      if (!path) {
+        $currentLocation.textContent = 'Browse folders to view files';
+        $currentPath.innerHTML = '';
+        document.getElementById('backToRoot').textContent = '📁 Root';
+        return;
+      }
 
-      if (error) return alert("Open failed: " + error.message);
-      window.open(data.signedUrl, "_blank");
+      $currentLocation.textContent = `Inside: ${path}`;
+      
+      const parts = path.split('/').filter(p => p);
+      let breadcrumbHtml = '';
+      let accumPath = '';
+      
+      parts.forEach((part, i) => {
+        accumPath += part + '/';
+        if (i === parts.length - 1) {
+          breadcrumbHtml += `<span>${escapeHtml(part)}</span>`;
+        } else {
+          breadcrumbHtml += `<span onclick="navigateToFolder('${accumPath.slice(0, -1)}')">${escapeHtml(part)}</span> > `;
+        }
+      });
+      
+      $currentPath.innerHTML = breadcrumbHtml;
+      document.getElementById('backToRoot').textContent = '📁 Root';
     }
 
-    async function downloadFile(filePath) {
-      const { data, error } = await supabase.storage
-        .from(BUCKET)
-        .download(filePath);
+    $btnRefresh.addEventListener('click', () => {
+      console.log('Button refresh clicked');
+      if (currentPath === '') {
+        loadRootFolders();
+      } else {
+        loadFolderContents(currentPath);
+      }
+    });
 
-      if (error) return alert("Download failed: " + error.message);
-
-      const blob = data;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filePath.split("/").pop();
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+    function escapeHtml(s) {
+      return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     }
+
+    // Page load initialization
+    window.addEventListener('load', () => {
+      console.log('=== PAGE LOAD INITIATED ===');
+      
+      // 1. Load persistent folder cache
+      loadFolderCacheFromStorage();
+      
+      // 2. Restore session
+      initializeSessionFromStorage();
+      
+      // 3. Load Supabase auth
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        console.log('Supabase session loaded:', session?.user?.email || 'No user');
+        updateUiForUser(session?.user || null);
+      });
+
+      supabase.auth.onAuthStateChange((event, session) => {
+        updateUiForUser(session?.user || null);
+      });
+
+      console.log('Page initialization complete');
+    });
+
+    // Event listeners
+    $btnSignIn.addEventListener('click', async () => {
+      const email = $email.value.trim();
+      const password = $password.value;
+      if (!email || !password) return alert('Enter email and password');
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) return alert('Sign in error: ' + error.message);
+    });
+
+    $btnSignUp.addEventListener('click', async () => {
+      const email = $email.value.trim();
+      const password = $password.value;
+      if (!email || !password) return alert('Enter email and password');
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) return alert('Sign up error: ' + error.message);
+      else alert('Check your email to confirm (if required by your Supabase settings).');
+    });
+
+    $btnSignOut.addEventListener('click', async () => {
+      console.log('Manual sign out clicked');
+      await supabase.auth.signOut();
+      $email.value = '';
+      $password.value = '';
+    });
+
+    // Initialize
+    console.log('Script loaded - waiting for DOM...');
   </script>
 </body>
 </html>
