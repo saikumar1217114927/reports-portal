@@ -103,13 +103,15 @@
     // Session timeout configuration
     const SESSION_DURATION = 10 * 60 * 1000; // 10 minutes in milliseconds
     
-    // NEW: localStorage keys for session persistence
+    // localStorage keys for session persistence
     const SESSION_START_KEY = 'fileportal_session_start';
     const SESSION_ACTIVE_KEY = 'fileportal_session_active';
+    const FOLDER_CACHE_KEY = 'fileportal_folder_cache'; // NEW: Persistent folder cache
     
     let sessionStartTime = null;
     let sessionTimeout = null;
     let sessionInterval = null;
+    let folderCache = new Map(); // FIXED: Now persistent across refreshes
     // ------------------------------------------------
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -117,7 +119,6 @@
     // State for folder navigation
     let currentPath = '';
     let allFolders = [];
-    let folderCache = new Map();
 
     const $email = document.getElementById('email');
     const $password = document.getElementById('password');
@@ -137,7 +138,43 @@
     const $timerText = document.getElementById('timerText');
     const $sessionProgress = document.getElementById('sessionProgress');
 
-    // NEW: Session persistence helpers
+    // NEW: Folder cache persistence helpers
+    function loadFolderCacheFromStorage() {
+      try {
+        const saved = localStorage.getItem(FOLDER_CACHE_KEY);
+        if (saved) {
+          const cacheData = JSON.parse(saved);
+          folderCache.clear();
+          
+          // Restore cache entries that are less than 1 hour old
+          const oneHourAgo = Date.now() - (60 * 60 * 1000);
+          for (const [normalizedName, timestamp] of Object.entries(cacheData)) {
+            if (timestamp > oneHourAgo) {
+              folderCache.set(normalizedName, timestamp);
+            }
+          }
+          
+          console.log(`Restored folder cache: ${folderCache.size} entries`);
+        }
+      } catch (err) {
+        console.error('Failed to load folder cache from storage:', err);
+      }
+    }
+
+    function saveFolderCacheToStorage() {
+      try {
+        const cacheData = {};
+        for (const [key, timestamp] of folderCache.entries()) {
+          cacheData[key] = timestamp;
+        }
+        localStorage.setItem(FOLDER_CACHE_KEY, JSON.stringify(cacheData));
+        console.log(`Saved folder cache: ${folderCache.size} entries`);
+      } catch (err) {
+        console.error('Failed to save folder cache to storage:', err);
+      }
+    }
+
+    // Session persistence helpers
     function saveSessionStartTime(timestamp) {
       try {
         localStorage.setItem(SESSION_START_KEY, timestamp.toString());
@@ -155,13 +192,12 @@
         
         if (saved && isActive) {
           const timestamp = parseInt(saved);
-          // Check if session is still valid (not expired)
           const now = Date.now();
           const elapsed = now - timestamp;
           
           if (elapsed < SESSION_DURATION) {
             console.log('Restored session from localStorage:', new Date(timestamp).toLocaleTimeString());
-            console.log(`Session has ${Math.round((SESSION_DURATION - elapsed) / 1000)} seconds remaining`);
+            console.log(`Session has ${Math.round((SESSION_DURATION - elapsed) / 1000)}s remaining`);
             return timestamp;
           } else {
             console.log('Session expired in localStorage - clearing');
@@ -185,16 +221,14 @@
       }
     }
 
-    // NEW: Initialize session from storage on page load
+    // Initialize session from storage on page load
     function initializeSessionFromStorage() {
       sessionStartTime = loadSessionStartTime();
       
       if (sessionStartTime) {
-        // Restore existing session
         console.log('Initializing session from storage');
         startSessionTimerFromStorage();
       } else {
-        // No valid session - will start fresh when user logs in
         console.log('No valid session in storage - fresh start needed');
         sessionStartTime = null;
       }
@@ -205,26 +239,57 @@
       return name.replace(/\/$/, '').trim().toLowerCase();
     }
 
-    // Check if folder already exists in cache
+    // FIXED: Check if folder already exists in cache (now persistent)
     function isFolderCached(folderName) {
-      return folderCache.has(normalizeFolderName(folderName));
+      const normalized = normalizeFolderName(folderName);
+      const cached = folderCache.get(normalized);
+      
+      // Only consider it cached if it's less than 1 hour old
+      if (cached) {
+        const oneHourAgo = Date.now() - (60 * 60 * 1000);
+        if (cached > oneHourAgo) {
+          console.log(`Folder "${normalized}" found in cache (timestamp: ${new Date(cached).toLocaleTimeString()})`);
+          return true;
+        } else {
+          console.log(`Removing stale cache entry for "${normalized}"`);
+          folderCache.delete(normalized);
+          saveFolderCacheToStorage();
+        }
+      }
+      
+      return false;
     }
 
     function addFolderToCache(folderName) {
-      folderCache.set(normalizeFolderName(folderName), Date.now());
+      const normalized = normalizeFolderName(folderName);
+      folderCache.set(normalized, Date.now());
+      saveFolderCacheToStorage(); // Save immediately
+      console.log(`Added "${normalized}" to persistent cache`);
     }
 
+    // FIXED: Only clean cache on logout, not on every UI update
     function cleanFolderCache() {
       const oneHourAgo = Date.now() - (60 * 60 * 1000);
+      let cleaned = 0;
+      
       for (const [key, timestamp] of folderCache.entries()) {
         if (timestamp < oneHourAgo) {
           folderCache.delete(key);
+          cleaned++;
         }
+      }
+      
+      if (cleaned > 0) {
+        console.log(`Cleaned ${cleaned} stale cache entries`);
+        saveFolderCacheToStorage();
       }
     }
 
     async function updateUiForUser(user) {
-      cleanFolderCache();
+      // FIXED: Only clean cache on logout, not on refresh
+      if (!user) {
+        cleanFolderCache();
+      }
       
       if (user) {
         $status.textContent = `signed in as ${user.email}`;
@@ -234,15 +299,12 @@
         $breadcrumb.style.display = 'block';
         $sessionTimer.style.display = 'block';
         
-        // FIXED: Handle session initialization
         if (!sessionStartTime) {
-          // Fresh login - start new session
           sessionStartTime = Date.now();
           saveSessionStartTime(sessionStartTime);
           startSessionTimer();
           console.log('Fresh login - new session started');
         } else {
-          // Session exists (from storage or previous activity)
           console.log('Session already active - checking state');
           updateSessionDisplay();
         }
@@ -261,21 +323,20 @@
         currentPath = '';
         allFolders = [];
         
-        // Clear session on logout
         sessionStartTime = null;
         stopSessionTimer();
         clearSessionStorage();
+        folderCache.clear(); // Clear cache on logout
       }
     }
 
-    // FIXED: Session timer - restore from storage
+    // Session timer - restore from storage
     function startSessionTimerFromStorage() {
       if (sessionTimeout) clearTimeout(sessionTimeout);
       if (sessionInterval) clearInterval(sessionInterval);
       
       console.log('Restoring session timer from storage');
       
-      // Set timeout based on remaining time
       const elapsed = Date.now() - sessionStartTime;
       const remaining = SESSION_DURATION - elapsed;
       
@@ -284,29 +345,24 @@
           console.log('Session expired - auto-logging out');
           handleSessionExpiry();
         }, remaining);
+        
+        sessionInterval = setInterval(updateSessionDisplay, 1000);
+        
+        if (!document.hasSessionListeners) {
+          document.addEventListener('click', resetSessionTimer);
+          document.addEventListener('keypress', resetSessionTimer);
+          document.addEventListener('mousemove', resetSessionTimer);
+          document.hasSessionListeners = true;
+        }
+        
+        updateSessionDisplay();
+        console.log(`Session restored - ${Math.round(remaining / 1000)}s remaining`);
       } else {
-        // Session already expired
         console.log('Session expired during page reload');
         handleSessionExpiry();
-        return;
       }
-      
-      // Start display update
-      sessionInterval = setInterval(updateSessionDisplay, 1000);
-      
-      // Add event listeners if not already added
-      if (!document.hasSessionListeners) {
-        document.addEventListener('click', resetSessionTimer);
-        document.addEventListener('keypress', resetSessionTimer);
-        document.addEventListener('mousemove', resetSessionTimer);
-        document.hasSessionListeners = true;
-      }
-      
-      updateSessionDisplay();
-      console.log(`Session restored - ${Math.round(remaining / 1000)}s remaining`);
     }
 
-    // FIXED: Regular session timer start (for fresh logins)
     function startSessionTimer() {
       if (sessionTimeout && sessionInterval) {
         console.log('Session timer already running');
@@ -350,7 +406,6 @@
     function resetSessionTimer() {
       if (!sessionStartTime) return;
       
-      // Save the current start time to localStorage
       saveSessionStartTime(sessionStartTime);
       
       clearTimeout(sessionTimeout);
@@ -374,7 +429,6 @@
         $timerText.textContent = 'Session expired - logging out...';
         $timerText.className = 'session-expired';
         $sessionProgress.style.width = '0%';
-        // Clear storage when expired
         clearSessionStorage();
         return;
       }
@@ -383,7 +437,7 @@
       const seconds = Math.floor((remaining % 60000) / 1000);
       const timeText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
       
-      if (remaining <= 120000) { // 2 minutes
+      if (remaining <= 120000) {
         $timerText.className = 'session-warning';
         $timerText.textContent = `Session expires in ${timeText} ⚠️`;
       } else {
@@ -405,7 +459,7 @@
       }
     }
 
-    // FIXED: Load root folders (keeping existing deduplication)
+    // FIXED: Load root folders - use persistent cache
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
@@ -427,14 +481,28 @@
         
         console.log('=== ROOT FOLDER SCAN ===');
         console.log('Raw root items:', data.map(item => item.name));
+        console.log('Current cache size:', folderCache.size);
         
         for (const item of data) {
           const normalizedName = normalizeFolderName(item.name);
           
           console.log(`\nChecking: "${item.name}" -> normalized: "${normalizedName}"`);
           
+          // FIXED: Check cache FIRST before scanning
+          if (isFolderCached(item.name)) {
+            console.log('  → SKIPPED: Already in persistent cache');
+            seenFolders.add(normalizedName);
+            allFolders.push({ 
+              name: normalizedName, 
+              fullPath: normalizedName,
+              originalName: item.name,
+              isFolder: true 
+            });
+            continue;
+          }
+          
           if (seenFolders.has(normalizedName)) {
-            console.log('  → SKIPPED: Duplicate folder name');
+            console.log('  → SKIPPED: Duplicate in current scan');
             continue;
           }
           
@@ -461,21 +529,22 @@
           
           if (isFolder) {
             seenFolders.add(normalizedName);
-            const displayName = normalizeFolderName(item.name);
+            const displayName = normalizedName;
             allFolders.push({ 
               name: displayName, 
               fullPath: displayName,
               originalName: item.name,
               isFolder: true 
             });
-            console.log(`  → ADDED: Folder "${displayName}"`);
-            addFolderToCache(displayName);
+            addFolderToCache(item.name); // Add to persistent cache
+            console.log(`  → ADDED: New folder "${displayName}" to cache`);
           }
         }
 
         console.log('\n=== FINAL RESULT ===');
         console.log('Unique folders found:', allFolders.map(f => f.name));
         console.log('Total count:', allFolders.length);
+        console.log('Final cache size:', folderCache.size);
 
         if (allFolders.length === 0) {
           $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
@@ -715,14 +784,18 @@
       return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     }
 
-    // FIXED: Initialize on page load
+    // FIXED: Page load initialization
     window.addEventListener('load', () => {
       console.log('=== PAGE LOAD INITIATED ===');
       
-      // Initialize session from storage FIRST
+      // 1. FIRST: Load persistent folder cache
+      loadFolderCacheFromStorage();
+      console.log(`Loaded folder cache with ${folderCache.size} entries`);
+      
+      // 2. THEN: Restore session from storage
       initializeSessionFromStorage();
       
-      // Then initialize Supabase auth
+      // 3. THEN: Load Supabase auth
       supabase.auth.getSession().then(({ data: { session } }) => {
         console.log('Supabase session loaded:', session?.user?.email || 'No user');
         updateUiForUser(session?.user || null);
