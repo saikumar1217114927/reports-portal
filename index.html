@@ -102,10 +102,14 @@
     
     // Session timeout configuration
     const SESSION_DURATION = 10 * 60 * 1000; // 10 minutes in milliseconds
+    
+    // NEW: localStorage keys for session persistence
+    const SESSION_START_KEY = 'fileportal_session_start';
+    const SESSION_ACTIVE_KEY = 'fileportal_session_active';
+    
     let sessionStartTime = null;
     let sessionTimeout = null;
     let sessionInterval = null;
-    let isPageLoaded = false; // NEW: Track if page has fully loaded
     // ------------------------------------------------
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -113,7 +117,7 @@
     // State for folder navigation
     let currentPath = '';
     let allFolders = [];
-    let folderCache = new Map(); // NEW: Cache to prevent duplicates across refreshes
+    let folderCache = new Map();
 
     const $email = document.getElementById('email');
     const $password = document.getElementById('password');
@@ -133,22 +137,83 @@
     const $timerText = document.getElementById('timerText');
     const $sessionProgress = document.getElementById('sessionProgress');
 
+    // NEW: Session persistence helpers
+    function saveSessionStartTime(timestamp) {
+      try {
+        localStorage.setItem(SESSION_START_KEY, timestamp.toString());
+        localStorage.setItem(SESSION_ACTIVE_KEY, 'true');
+        console.log('Session start time saved:', new Date(timestamp).toLocaleTimeString());
+      } catch (err) {
+        console.error('Failed to save session to localStorage:', err);
+      }
+    }
+
+    function loadSessionStartTime() {
+      try {
+        const saved = localStorage.getItem(SESSION_START_KEY);
+        const isActive = localStorage.getItem(SESSION_ACTIVE_KEY) === 'true';
+        
+        if (saved && isActive) {
+          const timestamp = parseInt(saved);
+          // Check if session is still valid (not expired)
+          const now = Date.now();
+          const elapsed = now - timestamp;
+          
+          if (elapsed < SESSION_DURATION) {
+            console.log('Restored session from localStorage:', new Date(timestamp).toLocaleTimeString());
+            console.log(`Session has ${Math.round((SESSION_DURATION - elapsed) / 1000)} seconds remaining`);
+            return timestamp;
+          } else {
+            console.log('Session expired in localStorage - clearing');
+            clearSessionStorage();
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load session from localStorage:', err);
+      }
+      
+      return null;
+    }
+
+    function clearSessionStorage() {
+      try {
+        localStorage.removeItem(SESSION_START_KEY);
+        localStorage.removeItem(SESSION_ACTIVE_KEY);
+        console.log('Session storage cleared');
+      } catch (err) {
+        console.error('Failed to clear session storage:', err);
+      }
+    }
+
+    // NEW: Initialize session from storage on page load
+    function initializeSessionFromStorage() {
+      sessionStartTime = loadSessionStartTime();
+      
+      if (sessionStartTime) {
+        // Restore existing session
+        console.log('Initializing session from storage');
+        startSessionTimerFromStorage();
+      } else {
+        // No valid session - will start fresh when user logs in
+        console.log('No valid session in storage - fresh start needed');
+        sessionStartTime = null;
+      }
+    }
+
     // Helper to normalize folder names
     function normalizeFolderName(name) {
       return name.replace(/\/$/, '').trim().toLowerCase();
     }
 
-    // NEW: Check if folder already exists in cache
+    // Check if folder already exists in cache
     function isFolderCached(folderName) {
       return folderCache.has(normalizeFolderName(folderName));
     }
 
-    // NEW: Add folder to cache
     function addFolderToCache(folderName) {
       folderCache.set(normalizeFolderName(folderName), Date.now());
     }
 
-    // NEW: Clean old cache entries (older than 1 hour)
     function cleanFolderCache() {
       const oneHourAgo = Date.now() - (60 * 60 * 1000);
       for (const [key, timestamp] of folderCache.entries()) {
@@ -159,7 +224,6 @@
     }
 
     async function updateUiForUser(user) {
-      // NEW: Clean cache on every UI update to prevent stale data
       cleanFolderCache();
       
       if (user) {
@@ -170,9 +234,17 @@
         $breadcrumb.style.display = 'block';
         $sessionTimer.style.display = 'block';
         
-        // FIXED: Only start timer if page is fully loaded
-        if (isPageLoaded) {
+        // FIXED: Handle session initialization
+        if (!sessionStartTime) {
+          // Fresh login - start new session
+          sessionStartTime = Date.now();
+          saveSessionStartTime(sessionStartTime);
           startSessionTimer();
+          console.log('Fresh login - new session started');
+        } else {
+          // Session exists (from storage or previous activity)
+          console.log('Session already active - checking state');
+          updateSessionDisplay();
         }
         
         currentPath = '';
@@ -189,25 +261,63 @@
         currentPath = '';
         allFolders = [];
         
+        // Clear session on logout
+        sessionStartTime = null;
         stopSessionTimer();
+        clearSessionStorage();
       }
     }
 
-    // FIXED: Session management - don't restart on every page load
+    // FIXED: Session timer - restore from storage
+    function startSessionTimerFromStorage() {
+      if (sessionTimeout) clearTimeout(sessionTimeout);
+      if (sessionInterval) clearInterval(sessionInterval);
+      
+      console.log('Restoring session timer from storage');
+      
+      // Set timeout based on remaining time
+      const elapsed = Date.now() - sessionStartTime;
+      const remaining = SESSION_DURATION - elapsed;
+      
+      if (remaining > 0) {
+        sessionTimeout = setTimeout(() => {
+          console.log('Session expired - auto-logging out');
+          handleSessionExpiry();
+        }, remaining);
+      } else {
+        // Session already expired
+        console.log('Session expired during page reload');
+        handleSessionExpiry();
+        return;
+      }
+      
+      // Start display update
+      sessionInterval = setInterval(updateSessionDisplay, 1000);
+      
+      // Add event listeners if not already added
+      if (!document.hasSessionListeners) {
+        document.addEventListener('click', resetSessionTimer);
+        document.addEventListener('keypress', resetSessionTimer);
+        document.addEventListener('mousemove', resetSessionTimer);
+        document.hasSessionListeners = true;
+      }
+      
+      updateSessionDisplay();
+      console.log(`Session restored - ${Math.round(remaining / 1000)}s remaining`);
+    }
+
+    // FIXED: Regular session timer start (for fresh logins)
     function startSessionTimer() {
-      // NEW: Check if timer is already running (prevents restart on refresh)
       if (sessionTimeout && sessionInterval) {
-        console.log('Session timer already running - skipping restart');
-        updateSessionDisplay(); // Just update display
+        console.log('Session timer already running');
+        updateSessionDisplay();
         return;
       }
       
       if (sessionTimeout) clearTimeout(sessionTimeout);
       if (sessionInterval) clearInterval(sessionInterval);
       
-      sessionStartTime = Date.now();
-      
-      console.log('Starting new session timer');
+      console.log('Starting fresh session timer');
       
       sessionTimeout = setTimeout(() => {
         console.log('Session expired - auto-logging out');
@@ -216,7 +326,6 @@
       
       sessionInterval = setInterval(updateSessionDisplay, 1000);
       
-      // Only add event listeners once
       if (!document.hasSessionListeners) {
         document.addEventListener('click', resetSessionTimer);
         document.addEventListener('keypress', resetSessionTimer);
@@ -241,6 +350,9 @@
     function resetSessionTimer() {
       if (!sessionStartTime) return;
       
+      // Save the current start time to localStorage
+      saveSessionStartTime(sessionStartTime);
+      
       clearTimeout(sessionTimeout);
       sessionTimeout = setTimeout(() => {
         console.log('Session expired - auto-logging out');
@@ -262,6 +374,8 @@
         $timerText.textContent = 'Session expired - logging out...';
         $timerText.className = 'session-expired';
         $sessionProgress.style.width = '0%';
+        // Clear storage when expired
+        clearSessionStorage();
         return;
       }
       
@@ -281,6 +395,9 @@
     }
 
     async function handleSessionExpiry() {
+      sessionStartTime = null;
+      clearSessionStorage();
+      
       if (confirm('Your session has expired for security reasons. You will be logged out. Click OK to continue.')) {
         await supabase.auth.signOut();
       } else {
@@ -288,7 +405,7 @@
       }
     }
 
-    // FIXED: Load root folders with better deduplication
+    // FIXED: Load root folders (keeping existing deduplication)
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
@@ -305,21 +422,17 @@
           return;
         }
 
-        // FIXED: More robust deduplication
         const seenFolders = new Set();
         allFolders = [];
         
         console.log('=== ROOT FOLDER SCAN ===');
         console.log('Raw root items:', data.map(item => item.name));
         
-        // First pass: collect all potential folders
-        const potentialFolders = [];
         for (const item of data) {
           const normalizedName = normalizeFolderName(item.name);
           
           console.log(`\nChecking: "${item.name}" -> normalized: "${normalizedName}"`);
           
-          // Skip if we've already seen this folder name
           if (seenFolders.has(normalizedName)) {
             console.log('  → SKIPPED: Duplicate folder name');
             continue;
@@ -328,11 +441,9 @@
           let isFolder = false;
           
           if (item.name.endsWith('/')) {
-            // Explicit folder marker
             isFolder = true;
             console.log('  → DETECTED: Explicit folder (ends with /)');
           } else {
-            // Check if it contains items
             const { data: contents, error: checkError } = await supabase.storage
               .from(STORAGE_BUCKET)
               .list(item.name, { limit: 1 });
@@ -350,36 +461,18 @@
           
           if (isFolder) {
             seenFolders.add(normalizedName);
-            potentialFolders.push({ 
-              name: normalizedName, 
-              fullPath: normalizedName,
+            const displayName = normalizeFolderName(item.name);
+            allFolders.push({ 
+              name: displayName, 
+              fullPath: displayName,
               originalName: item.name,
               isFolder: true 
             });
-            console.log(`  → ADDED: Folder "${normalizedName}"`);
-            
-            // Add to cache
-            addFolderToCache(normalizedName);
+            console.log(`  → ADDED: Folder "${displayName}"`);
+            addFolderToCache(displayName);
           }
         }
 
-        // Check cache for any missed folders
-        console.log('\n=== CACHE CHECK ===');
-        for (const [cachedName] of folderCache.entries()) {
-          if (!seenFolders.has(cachedName)) {
-            console.log(`Cache hit: Adding "${cachedName}" from cache`);
-            potentialFolders.push({ 
-              name: cachedName, 
-              fullPath: cachedName,
-              originalName: cachedName,
-              isFolder: true 
-            });
-            seenFolders.add(cachedName);
-          }
-        }
-
-        allFolders = potentialFolders;
-        
         console.log('\n=== FINAL RESULT ===');
         console.log('Unique folders found:', allFolders.map(f => f.name));
         console.log('Total count:', allFolders.length);
@@ -609,7 +702,6 @@
       document.getElementById('backToRoot').textContent = '📁 Root';
     }
 
-    // FIXED: Button refresh - simple reload of current view
     $btnRefresh.addEventListener('click', () => {
       console.log('Button refresh clicked');
       if (currentPath === '') {
@@ -619,25 +711,32 @@
       }
     });
 
-    // NEW: Handle page load completion
-    window.addEventListener('load', () => {
-      isPageLoaded = true;
-      console.log('Page fully loaded - enabling session timer');
-    });
-
     function escapeHtml(s) {
       return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     }
 
-    // Initialize - don't start timer until page is loaded
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      updateUiForUser(session?.user || null);
+    // FIXED: Initialize on page load
+    window.addEventListener('load', () => {
+      console.log('=== PAGE LOAD INITIATED ===');
+      
+      // Initialize session from storage FIRST
+      initializeSessionFromStorage();
+      
+      // Then initialize Supabase auth
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        console.log('Supabase session loaded:', session?.user?.email || 'No user');
+        updateUiForUser(session?.user || null);
+      });
+
+      supabase.auth.onAuthStateChange((event, session) => {
+        console.log('Auth state changed:', event, session?.user?.email || 'No user');
+        updateUiForUser(session?.user || null);
+      });
+
+      console.log('Page initialization complete');
     });
 
-    supabase.auth.onAuthStateChange((event, session) => {
-      updateUiForUser(session?.user || null);
-    });
-
+    // Event listeners
     $btnSignIn.addEventListener('click', async () => {
       const email = $email.value.trim();
       const password = $password.value;
@@ -656,13 +755,14 @@
     });
 
     $btnSignOut.addEventListener('click', async () => {
+      console.log('Manual sign out clicked');
       await supabase.auth.signOut();
       $email.value = '';
       $password.value = '';
     });
 
     // Initialize
-    updateUiForUser(null);
+    console.log('Script loaded - waiting for DOM...');
   </script>
 </body>
 </html>
