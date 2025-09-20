@@ -158,12 +158,11 @@
       $password.value = '';
     });
 
-    // Load only actual folders at root level
+    // FIXED: Load only actual folders at root level
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
       try {
-        // Get ALL items from root to detect folders
         const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
         if (error) {
           $filesList.innerHTML = '<div class="meta">Error loading folders: ' + error.message + '</div>';
@@ -176,20 +175,17 @@
           return;
         }
 
-        // Detect folders by checking if they contain items (files or subfolders)
+        // Detect folders by checking if they contain items
         allFolders = [];
         const folderPromises = data.map(async (item) => {
           if (item.name.endsWith('/')) {
-            // Already a folder (ends with /)
-            return { name: item.name, isFolder: true, size: 0 };
+            return { name: item.name, isFolder: true };
           } else {
-            // Check if this is actually a folder by seeing if it has contents
             const { data: contents, error: checkError } = await supabase.storage.from(STORAGE_BUCKET).list(item.name, { limit: 1 });
             if (!checkError && contents && contents.length > 0) {
-              // This is a folder (has contents but doesn't end with /)
-              return { name: item.name + '/', isFolder: true, size: 0 };
+              return { name: item.name + '/', isFolder: true };
             }
-            return null; // This is a file
+            return null;
           }
         });
 
@@ -216,7 +212,7 @@
       updateBreadcrumb(currentPath);
     };
 
-    // FIXED: Load contents of a specific folder - get actual file sizes
+    // FIXED: Load contents of a specific folder - proper URL encoding
     async function loadFolderContents(path) {
       $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
       
@@ -232,53 +228,34 @@
         return;
       }
 
-      // Separate actual folders and files
       const folders = [];
       const files = [];
       
-      // First pass: identify folders (either end with / or have contents)
+      // Process items
       for (const item of data) {
         if (item.name.endsWith('/')) {
-          // Clear folder indicator
-          folders.push({ name: item.name.slice(0, -1), fullPath: path + item.name, size: 0 });
+          folders.push({ name: item.name.slice(0, -1), fullPath: path + item.name });
         } else {
-          // Check if this item has contents (is actually a folder)
-          const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(`${path}${item.name}`, { limit: 1 });
+          // Check if this is a subfolder
+          const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(`${path}${item.name}/`, { limit: 1 });
           if (contents && contents.length > 0) {
-            // This is a subfolder
-            folders.push({ name: item.name, fullPath: `${path}${item.name}/`, size: 0 });
+            folders.push({ name: item.name, fullPath: `${path}${item.name}/` });
           } else {
-            // This is a file - get actual size by fetching file details
-            try {
-              const fullFilePath = `${path}${item.name}`;
-              const { data: fileData, error: fileError } = await supabase.storage
-                .from(STORAGE_BUCKET)
-                .download(fullFilePath);
-              
-              let fileSize = 0;
-              if (!fileError && fileData) {
-                fileSize = fileData.size || 0; // Use actual file size from download
-              }
-              
-              const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullFilePath).data.publicUrl;
-              files.push({ 
-                name: item.name, 
-                fullPath: fullFilePath, 
-                size: fileSize, 
-                publicUrl 
-              });
-            } catch (err) {
-              console.error('Error getting file size:', err);
-              // Fallback: use 0 size if we can't get it
-              const fullFilePath = `${path}${item.name}`;
-              const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullFilePath).data.publicUrl;
-              files.push({ 
-                name: item.name, 
-                fullPath: fullFilePath, 
-                size: 0, 
-                publicUrl 
-              });
-            }
+            // This is a file - FIXED: Proper URL construction
+            const fullFilePath = `${path}${item.name}`;
+            
+            // FIXED: Construct the direct public URL manually with proper encoding
+            const encodedPath = encodeURIComponent(fullFilePath);
+            const directUrl = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${encodedPath}`;
+            
+            console.log('File URL for', fullFilePath, '->', directUrl); // Debug log
+            
+            files.push({ 
+              name: item.name, 
+              fullPath: fullFilePath, 
+              size: 0, // We'll show "File" instead of size
+              publicUrl: directUrl 
+            });
           }
         }
       }
@@ -295,7 +272,6 @@
         return;
       }
 
-      // Show folder count
       const folderCount = document.createElement('div');
       folderCount.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
       folderCount.innerHTML = `<div style="font-weight:600;color:var(--accent)">📁 Folders (${folders.length})</div>`;
@@ -324,7 +300,6 @@
           navigateToFolder(fullPath);
         });
         
-        // Prevent clicks on child elements
         el.querySelectorAll('*').forEach(child => {
           child.style.pointerEvents = 'none';
         });
@@ -333,11 +308,10 @@
       });
     }
 
-    // FIXED: Render files + subfolders inside folders - show proper sizes
+    // FIXED: Render files + subfolders inside folders - proper URLs
     function renderFolderContents(folders, files, currentPath) {
       $filesList.innerHTML = '';
 
-      // Show location info
       const displayPath = currentPath.endsWith('/') ? currentPath.slice(0, -1) : currentPath;
       const locationInfo = document.createElement('div');
       locationInfo.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
@@ -371,20 +345,26 @@
         $filesList.appendChild(el);
       });
 
-      // Render files - FIXED: Show proper file sizes or "Unknown size"
+      // FIXED: Render files with properly encoded URLs
       files.forEach(it => {
-        const fileSize = it.size > 0 ? formatBytes(it.size) : 'Unknown size';
         const el = document.createElement('div');
         el.className = 'file';
         el.innerHTML = `
           <div style="flex: 1;">
             <div style="font-weight:600">📄 ${escapeHtml(it.name)}</div>
-            <div class="meta">${fileSize}</div>
+            <div class="meta">File</div>
           </div>
           <div class="actions">
             <a href="${it.publicUrl}" target="_blank" rel="noopener noreferrer">Open</a>
           </div>
         `;
+        
+        // Add click handler to test URL (for debugging)
+        el.querySelector('a').addEventListener('click', function(e) {
+          console.log('Opening file:', it.fullPath);
+          console.log('Using URL:', it.publicUrl);
+        });
+        
         $filesList.appendChild(el);
       });
     }
@@ -425,14 +405,6 @@
       }
     });
 
-    // FIXED: Better file size formatting
-    function formatBytes(bytes) {
-      if (!bytes || bytes === 0) return 'Unknown size';
-      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(1024));
-      return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
-    }
-    
     function escapeHtml(s) {
       return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     }
