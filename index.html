@@ -51,7 +51,7 @@
       </div>
       <div class="small">Status: <span id="status">not signed in</span></div>
       
-      <!-- NEW: Session Timer -->
+      <!-- Session Timer -->
       <div id="sessionTimer" class="session-timer" style="display:none">
         <span id="timerText">Session expires in 10:00</span>
         <div class="session-bar">
@@ -100,7 +100,7 @@
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
     const STORAGE_BUCKET = 'files';
     
-    // NEW: Session timeout configuration
+    // Session timeout configuration
     const SESSION_DURATION = 10 * 60 * 1000; // 10 minutes in milliseconds
     let sessionStartTime = null;
     let sessionTimeout = null;
@@ -126,10 +126,21 @@
     const $currentPath = document.getElementById('currentPath');
     const $currentLocation = document.getElementById('currentLocation');
     
-    // NEW: Session timer elements
+    // Session timer elements
     const $sessionTimer = document.getElementById('sessionTimer');
     const $timerText = document.getElementById('timerText');
     const $sessionProgress = document.getElementById('sessionProgress');
+
+    // NEW: Helper to normalize folder names (remove duplicates)
+    function normalizeFolderName(name) {
+      // Remove trailing slash and normalize
+      return name.replace(/\/$/, '').trim();
+    }
+
+    // NEW: Helper to check if folder already exists (deduplication)
+    function findDuplicateFolder(folders, newFolderName) {
+      return folders.find(folder => normalizeFolderName(folder.name) === normalizeFolderName(newFolderName));
+    }
 
     async function updateUiForUser(user) {
       if (user) {
@@ -140,7 +151,7 @@
         $breadcrumb.style.display = 'block';
         $sessionTimer.style.display = 'block';
         
-        // NEW: Start session timer
+        // Start session timer
         startSessionTimer();
         
         currentPath = '';
@@ -157,28 +168,24 @@
         currentPath = '';
         allFolders = [];
         
-        // NEW: Stop session timer
         stopSessionTimer();
       }
     }
 
-    // NEW: Session management functions
+    // Session management functions
     function startSessionTimer() {
       if (sessionTimeout) clearTimeout(sessionTimeout);
       if (sessionInterval) clearInterval(sessionInterval);
       
       sessionStartTime = Date.now();
       
-      // Set timeout for automatic logout
       sessionTimeout = setTimeout(() => {
         console.log('Session expired - auto-logging out');
         handleSessionExpiry();
       }, SESSION_DURATION);
       
-      // Start countdown display
       sessionInterval = setInterval(updateSessionDisplay, 1000);
       
-      // Reset timer on user activity
       document.addEventListener('click', resetSessionTimer);
       document.addEventListener('keypress', resetSessionTimer);
       document.addEventListener('mousemove', resetSessionTimer);
@@ -204,16 +211,13 @@
     function resetSessionTimer() {
       if (!sessionStartTime) return;
       
-      // Reset the session timeout
       clearTimeout(sessionTimeout);
       sessionTimeout = setTimeout(() => {
         console.log('Session expired - auto-logging out');
         handleSessionExpiry();
       }, SESSION_DURATION);
       
-      // Update display immediately
       updateSessionDisplay();
-      
       console.log('Session timer reset due to activity');
     }
 
@@ -231,12 +235,10 @@
         return;
       }
       
-      // Format time (MM:SS)
       const minutes = Math.floor(remaining / 60000);
       const seconds = Math.floor((remaining % 60000) / 1000);
       const timeText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
       
-      // Warning color when < 2 minutes remaining
       if (remaining <= 120000) { // 2 minutes
         $timerText.className = 'session-warning';
         $timerText.textContent = `Session expires in ${timeText} ⚠️`;
@@ -248,14 +250,10 @@
       $sessionProgress.style.width = `${progress}%`;
     }
 
-    // NEW: Handle session expiry
     async function handleSessionExpiry() {
-      // Show warning modal
       if (confirm('Your session has expired for security reasons. You will be logged out. Click OK to continue.')) {
         await supabase.auth.signOut();
-        // onAuthStateChange will handle the UI update
       } else {
-        // User clicked Cancel - force logout anyway
         await supabase.auth.signOut();
       }
     }
@@ -291,7 +289,7 @@
       $password.value = '';
     });
 
-    // Load only actual folders at root level
+    // FIXED: Load only actual folders at root level - with deduplication
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
@@ -308,24 +306,52 @@
           return;
         }
 
+        // FIXED: Use Set for deduplication
+        const uniqueFolders = new Set();
         allFolders = [];
+        
+        console.log('Raw root items:', data.map(item => item.name)); // Debug
+        
         for (const item of data) {
           console.log('Checking root item:', item.name);
           
-          if (item.name.endsWith('/')) {
-            allFolders.push({ name: item.name, isFolder: true });
+          // Normalize the name for comparison
+          const normalizedName = normalizeFolderName(item.name);
+          
+          // Skip if we already have this folder
+          if (uniqueFolders.has(normalizedName)) {
+            console.log('Skipping duplicate folder:', normalizedName);
             continue;
           }
           
-          const { data: contents, error: checkError } = await supabase.storage.from(STORAGE_BUCKET).list(item.name, { limit: 1 });
-          console.log(`Contents of ${item.name}:`, contents?.length || 0);
+          let isFolder = false;
           
-          if (!checkError && contents && contents.length > 0) {
-            allFolders.push({ name: item.name, isFolder: true });
+          if (item.name.endsWith('/')) {
+            // Already a folder (ends with /)
+            isFolder = true;
+          } else {
+            // Check if it has contents (is actually a folder)
+            const { data: contents, error: checkError } = await supabase.storage.from(STORAGE_BUCKET).list(item.name, { limit: 1 });
+            console.log(`Contents of ${item.name}:`, contents?.length || 0);
+            
+            if (!checkError && contents && contents.length > 0) {
+              isFolder = true;
+            }
+          }
+          
+          if (isFolder) {
+            const displayName = normalizeFolderName(item.name);
+            uniqueFolders.add(displayName);
+            allFolders.push({ 
+              name: displayName, 
+              fullPath: displayName,
+              isFolder: true 
+            });
+            console.log('Added folder:', displayName);
           }
         }
 
-        console.log('Found folders:', allFolders);
+        console.log('Final unique folders:', allFolders.map(f => f.name));
 
         if (allFolders.length === 0) {
           $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
@@ -342,60 +368,81 @@
 
     // Navigate to folder - stays in UI
     window.navigateToFolder = async function(path) {
-      currentPath = path.endsWith('/') ? path.slice(0, -1) : path;
-      console.log('Navigating to path:', currentPath);
+      // FIXED: Normalize path to avoid duplicates
+      currentPath = normalizeFolderName(path);
+      console.log('Navigating to normalized path:', currentPath);
       await loadFolderContents(currentPath);
       updateBreadcrumb(currentPath);
     };
 
-    // Load contents of a specific folder - proper detection
+    // FIXED: Load contents of a specific folder - with deduplication
     async function loadFolderContents(path) {
       $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
       
       console.log('Loading contents of:', path);
       
-      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(path, { limit: 1000 });
+      // FIXED: Ensure path doesn't have trailing slash
+      const cleanPath = normalizeFolderName(path);
+      
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(cleanPath, { limit: 1000 });
       if (error) {
         $filesList.innerHTML = '<div class="meta">Error loading folder: ' + error.message + '</div>';
         console.error('Load folder error:', error);
         return;
       }
       
-      console.log('Raw folder contents:', data);
+      console.log('Raw folder contents:', data?.map(item => item.name) || []);
       
       if (!data || data.length === 0) {
         $filesList.innerHTML = '<div class="meta">This folder is empty.</div>';
         return;
       }
 
+      const uniqueFolders = new Set();
       const folders = [];
       const files = [];
       
       for (const item of data) {
         console.log('Processing item:', item.name);
         
+        const normalizedItemName = normalizeFolderName(item.name);
+        
         if (item.name.endsWith('/')) {
-          const folderName = item.name.slice(0, -1);
-          folders.push({ 
-            name: folderName, 
-            fullPath: `${path}/${folderName}` 
-          });
+          // This is a subfolder
+          const folderName = normalizeFolderName(item.name);
+          if (!uniqueFolders.has(folderName)) {
+            uniqueFolders.add(folderName);
+            folders.push({ 
+              name: folderName, 
+              fullPath: `${cleanPath}/${folderName}` 
+            });
+            console.log('Added subfolder:', folderName);
+          }
         } else {
-          const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(`${path}/${item.name}`, { limit: 1 });
+          // Check if this is a subfolder (has contents)
+          const subfolderPath = `${cleanPath}/${item.name}`;
+          const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(subfolderPath, { limit: 1 });
           
           if (contents && contents.length > 0) {
-            folders.push({ 
-              name: item.name, 
-              fullPath: `${path}/${item.name}` 
-            });
+            // This is a subfolder
+            const folderName = item.name;
+            if (!uniqueFolders.has(folderName)) {
+              uniqueFolders.add(folderName);
+              folders.push({ 
+                name: folderName, 
+                fullPath: subfolderPath 
+              });
+              console.log('Added nested subfolder:', folderName);
+            }
           } else {
-            const fullFilePath = `${path}/${item.name}`;
+            // This is definitely a file
+            const fullFilePath = `${cleanPath}/${item.name}`;
             
             const { data: urlData } = supabase.storage
               .from(STORAGE_BUCKET)
               .getPublicUrl(fullFilePath);
             
-            console.log('File detected:', fullFilePath, 'URL:', urlData.publicUrl);
+            console.log('File detected:', fullFilePath);
             
             files.push({ 
               name: item.name, 
@@ -407,9 +454,10 @@
         }
       }
 
-      console.log('Folders found:', folders.length, 'Files found:', files.length);
+      console.log('Final folders:', folders.map(f => f.name));
+      console.log('Final files:', files.map(f => f.name));
 
-      renderFolderContents(folders, files, path);
+      renderFolderContents(folders, files, cleanPath);
     }
 
     function renderRootFolders(folders) {
@@ -426,14 +474,11 @@
       $filesList.appendChild(folderCount);
 
       folders.forEach(folder => {
-        const displayName = folder.name.endsWith('/') ? folder.name.slice(0, -1) : folder.name;
-        const fullPath = folder.name.endsWith('/') ? folder.name : folder.name + '/';
-        
         const el = document.createElement('div');
         el.className = 'folder';
         el.innerHTML = `
           <div style="flex: 1;">
-            <div style="font-weight:600">📁 ${escapeHtml(displayName)}</div>
+            <div style="font-weight:600">📁 ${escapeHtml(folder.name)}</div>
             <div class="meta">Folder</div>
           </div>
           <div class="actions">
@@ -444,8 +489,8 @@
         el.addEventListener('click', function(e) {
           e.preventDefault();
           e.stopPropagation();
-          console.log('Entering root folder:', fullPath);
-          navigateToFolder(fullPath);
+          console.log('Entering root folder:', folder.fullPath);
+          navigateToFolder(folder.fullPath);
         });
         
         el.querySelectorAll('*').forEach(child => {
@@ -459,12 +504,12 @@
     function renderFolderContents(folders, files, currentPath) {
       $filesList.innerHTML = '';
 
-      const displayPath = currentPath;
       const locationInfo = document.createElement('div');
       locationInfo.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
-      locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${escapeHtml(displayPath)} (${files.length} files, ${folders.length} folders)</div>`;
+      locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${escapeHtml(currentPath)} (${files.length} files, ${folders.length} folders)</div>`;
       $filesList.appendChild(locationInfo);
 
+      // Render subfolders first
       folders.forEach(folder => {
         const el = document.createElement('div');
         el.className = 'folder';
@@ -491,6 +536,7 @@
         $filesList.appendChild(el);
       });
 
+      // Render files
       files.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
@@ -532,6 +578,7 @@
         if (i === parts.length - 1) {
           breadcrumbHtml += `<span>${escapeHtml(part)}</span>`;
         } else {
+          // FIXED: Use normalized path for breadcrumb navigation
           breadcrumbHtml += `<span onclick="navigateToFolder('${accumPath.slice(0, -1)}')">${escapeHtml(part)}</span> > `;
         }
       });
