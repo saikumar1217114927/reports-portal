@@ -105,6 +105,7 @@
     let sessionStartTime = null;
     let sessionTimeout = null;
     let sessionInterval = null;
+    let isPageLoaded = false; // NEW: Track if page has fully loaded
     // ------------------------------------------------
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -112,6 +113,7 @@
     // State for folder navigation
     let currentPath = '';
     let allFolders = [];
+    let folderCache = new Map(); // NEW: Cache to prevent duplicates across refreshes
 
     const $email = document.getElementById('email');
     const $password = document.getElementById('password');
@@ -131,18 +133,35 @@
     const $timerText = document.getElementById('timerText');
     const $sessionProgress = document.getElementById('sessionProgress');
 
-    // NEW: Helper to normalize folder names (remove duplicates)
+    // Helper to normalize folder names
     function normalizeFolderName(name) {
-      // Remove trailing slash and normalize
-      return name.replace(/\/$/, '').trim();
+      return name.replace(/\/$/, '').trim().toLowerCase();
     }
 
-    // NEW: Helper to check if folder already exists (deduplication)
-    function findDuplicateFolder(folders, newFolderName) {
-      return folders.find(folder => normalizeFolderName(folder.name) === normalizeFolderName(newFolderName));
+    // NEW: Check if folder already exists in cache
+    function isFolderCached(folderName) {
+      return folderCache.has(normalizeFolderName(folderName));
+    }
+
+    // NEW: Add folder to cache
+    function addFolderToCache(folderName) {
+      folderCache.set(normalizeFolderName(folderName), Date.now());
+    }
+
+    // NEW: Clean old cache entries (older than 1 hour)
+    function cleanFolderCache() {
+      const oneHourAgo = Date.now() - (60 * 60 * 1000);
+      for (const [key, timestamp] of folderCache.entries()) {
+        if (timestamp < oneHourAgo) {
+          folderCache.delete(key);
+        }
+      }
     }
 
     async function updateUiForUser(user) {
+      // NEW: Clean cache on every UI update to prevent stale data
+      cleanFolderCache();
+      
       if (user) {
         $status.textContent = `signed in as ${user.email}`;
         $btnSignOut.style.display = 'inline-block';
@@ -151,8 +170,10 @@
         $breadcrumb.style.display = 'block';
         $sessionTimer.style.display = 'block';
         
-        // Start session timer
-        startSessionTimer();
+        // FIXED: Only start timer if page is fully loaded
+        if (isPageLoaded) {
+          startSessionTimer();
+        }
         
         currentPath = '';
         await loadRootFolders();
@@ -172,12 +193,21 @@
       }
     }
 
-    // Session management functions
+    // FIXED: Session management - don't restart on every page load
     function startSessionTimer() {
+      // NEW: Check if timer is already running (prevents restart on refresh)
+      if (sessionTimeout && sessionInterval) {
+        console.log('Session timer already running - skipping restart');
+        updateSessionDisplay(); // Just update display
+        return;
+      }
+      
       if (sessionTimeout) clearTimeout(sessionTimeout);
       if (sessionInterval) clearInterval(sessionInterval);
       
       sessionStartTime = Date.now();
+      
+      console.log('Starting new session timer');
       
       sessionTimeout = setTimeout(() => {
         console.log('Session expired - auto-logging out');
@@ -186,9 +216,13 @@
       
       sessionInterval = setInterval(updateSessionDisplay, 1000);
       
-      document.addEventListener('click', resetSessionTimer);
-      document.addEventListener('keypress', resetSessionTimer);
-      document.addEventListener('mousemove', resetSessionTimer);
+      // Only add event listeners once
+      if (!document.hasSessionListeners) {
+        document.addEventListener('click', resetSessionTimer);
+        document.addEventListener('keypress', resetSessionTimer);
+        document.addEventListener('mousemove', resetSessionTimer);
+        document.hasSessionListeners = true;
+      }
       
       updateSessionDisplay();
     }
@@ -202,10 +236,6 @@
         clearInterval(sessionInterval);
         sessionInterval = null;
       }
-      
-      document.removeEventListener('click', resetSessionTimer);
-      document.removeEventListener('keypress', resetSessionTimer);
-      document.removeEventListener('mousemove', resetSessionTimer);
     }
 
     function resetSessionTimer() {
@@ -226,7 +256,7 @@
       
       const elapsed = Date.now() - sessionStartTime;
       const remaining = SESSION_DURATION - elapsed;
-      const progress = (remaining / SESSION_DURATION) * 100;
+      const progress = Math.max(0, (remaining / SESSION_DURATION) * 100);
       
       if (remaining <= 0) {
         $timerText.textContent = 'Session expired - logging out...';
@@ -258,38 +288,7 @@
       }
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      updateUiForUser(session?.user || null);
-    });
-
-    supabase.auth.onAuthStateChange((event, session) => {
-      updateUiForUser(session?.user || null);
-    });
-
-    $btnSignIn.addEventListener('click', async () => {
-      const email = $email.value.trim();
-      const password = $password.value;
-      if (!email || !password) return alert('Enter email and password');
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) return alert('Sign in error: ' + error.message);
-    });
-
-    $btnSignUp.addEventListener('click', async () => {
-      const email = $email.value.trim();
-      const password = $password.value;
-      if (!email || !password) return alert('Enter email and password');
-      const { data, error } = await supabase.auth.signUp({ email, password });
-      if (error) return alert('Sign up error: ' + error.message);
-      else alert('Check your email to confirm (if required by your Supabase settings).');
-    });
-
-    $btnSignOut.addEventListener('click', async () => {
-      await supabase.auth.signOut();
-      $email.value = '';
-      $password.value = '';
-    });
-
-    // FIXED: Load only actual folders at root level - with deduplication
+    // FIXED: Load root folders with better deduplication
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
@@ -306,52 +305,84 @@
           return;
         }
 
-        // FIXED: Use Set for deduplication
-        const uniqueFolders = new Set();
+        // FIXED: More robust deduplication
+        const seenFolders = new Set();
         allFolders = [];
         
-        console.log('Raw root items:', data.map(item => item.name)); // Debug
+        console.log('=== ROOT FOLDER SCAN ===');
+        console.log('Raw root items:', data.map(item => item.name));
         
+        // First pass: collect all potential folders
+        const potentialFolders = [];
         for (const item of data) {
-          console.log('Checking root item:', item.name);
-          
-          // Normalize the name for comparison
           const normalizedName = normalizeFolderName(item.name);
           
-          // Skip if we already have this folder
-          if (uniqueFolders.has(normalizedName)) {
-            console.log('Skipping duplicate folder:', normalizedName);
+          console.log(`\nChecking: "${item.name}" -> normalized: "${normalizedName}"`);
+          
+          // Skip if we've already seen this folder name
+          if (seenFolders.has(normalizedName)) {
+            console.log('  → SKIPPED: Duplicate folder name');
             continue;
           }
           
           let isFolder = false;
           
           if (item.name.endsWith('/')) {
-            // Already a folder (ends with /)
+            // Explicit folder marker
             isFolder = true;
+            console.log('  → DETECTED: Explicit folder (ends with /)');
           } else {
-            // Check if it has contents (is actually a folder)
-            const { data: contents, error: checkError } = await supabase.storage.from(STORAGE_BUCKET).list(item.name, { limit: 1 });
-            console.log(`Contents of ${item.name}:`, contents?.length || 0);
+            // Check if it contains items
+            const { data: contents, error: checkError } = await supabase.storage
+              .from(STORAGE_BUCKET)
+              .list(item.name, { limit: 1 });
             
-            if (!checkError && contents && contents.length > 0) {
+            const contentCount = contents ? contents.length : 0;
+            console.log(`  → Contents check: ${contentCount} items`);
+            
+            if (!checkError && contentCount > 0) {
               isFolder = true;
+              console.log('  → DETECTED: Has contents (is folder)');
+            } else {
+              console.log('  → DETECTED: No contents (is file)');
             }
           }
           
           if (isFolder) {
-            const displayName = normalizeFolderName(item.name);
-            uniqueFolders.add(displayName);
-            allFolders.push({ 
-              name: displayName, 
-              fullPath: displayName,
+            seenFolders.add(normalizedName);
+            potentialFolders.push({ 
+              name: normalizedName, 
+              fullPath: normalizedName,
+              originalName: item.name,
               isFolder: true 
             });
-            console.log('Added folder:', displayName);
+            console.log(`  → ADDED: Folder "${normalizedName}"`);
+            
+            // Add to cache
+            addFolderToCache(normalizedName);
           }
         }
 
-        console.log('Final unique folders:', allFolders.map(f => f.name));
+        // Check cache for any missed folders
+        console.log('\n=== CACHE CHECK ===');
+        for (const [cachedName] of folderCache.entries()) {
+          if (!seenFolders.has(cachedName)) {
+            console.log(`Cache hit: Adding "${cachedName}" from cache`);
+            potentialFolders.push({ 
+              name: cachedName, 
+              fullPath: cachedName,
+              originalName: cachedName,
+              isFolder: true 
+            });
+            seenFolders.add(cachedName);
+          }
+        }
+
+        allFolders = potentialFolders;
+        
+        console.log('\n=== FINAL RESULT ===');
+        console.log('Unique folders found:', allFolders.map(f => f.name));
+        console.log('Total count:', allFolders.length);
 
         if (allFolders.length === 0) {
           $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
@@ -368,20 +399,19 @@
 
     // Navigate to folder - stays in UI
     window.navigateToFolder = async function(path) {
-      // FIXED: Normalize path to avoid duplicates
       currentPath = normalizeFolderName(path);
-      console.log('Navigating to normalized path:', currentPath);
+      console.log('Navigating to:', currentPath);
       await loadFolderContents(currentPath);
       updateBreadcrumb(currentPath);
     };
 
-    // FIXED: Load contents of a specific folder - with deduplication
+    // Load contents of a specific folder
     async function loadFolderContents(path) {
       $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
       
+      console.log('=== FOLDER CONTENTS SCAN ===');
       console.log('Loading contents of:', path);
       
-      // FIXED: Ensure path doesn't have trailing slash
       const cleanPath = normalizeFolderName(path);
       
       const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(cleanPath, { limit: 1000 });
@@ -398,51 +428,47 @@
         return;
       }
 
-      const uniqueFolders = new Set();
+      const seenItems = new Set();
       const folders = [];
       const files = [];
       
       for (const item of data) {
-        console.log('Processing item:', item.name);
-        
         const normalizedItemName = normalizeFolderName(item.name);
         
+        console.log(`\nProcessing: "${item.name}" -> normalized: "${normalizedItemName}"`);
+        
+        if (seenItems.has(normalizedItemName)) {
+          console.log('  → SKIPPED: Duplicate item name');
+          continue;
+        }
+        
+        seenItems.add(normalizedItemName);
+        
         if (item.name.endsWith('/')) {
-          // This is a subfolder
           const folderName = normalizeFolderName(item.name);
-          if (!uniqueFolders.has(folderName)) {
-            uniqueFolders.add(folderName);
-            folders.push({ 
-              name: folderName, 
-              fullPath: `${cleanPath}/${folderName}` 
-            });
-            console.log('Added subfolder:', folderName);
-          }
+          folders.push({ 
+            name: folderName, 
+            fullPath: `${cleanPath}/${folderName}` 
+          });
+          console.log('  → ADDED: Subfolder');
         } else {
-          // Check if this is a subfolder (has contents)
           const subfolderPath = `${cleanPath}/${item.name}`;
           const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(subfolderPath, { limit: 1 });
           
           if (contents && contents.length > 0) {
-            // This is a subfolder
-            const folderName = item.name;
-            if (!uniqueFolders.has(folderName)) {
-              uniqueFolders.add(folderName);
-              folders.push({ 
-                name: folderName, 
-                fullPath: subfolderPath 
-              });
-              console.log('Added nested subfolder:', folderName);
-            }
+            folders.push({ 
+              name: item.name, 
+              fullPath: subfolderPath 
+            });
+            console.log('  → ADDED: Nested subfolder');
           } else {
-            // This is definitely a file
             const fullFilePath = `${cleanPath}/${item.name}`;
             
             const { data: urlData } = supabase.storage
               .from(STORAGE_BUCKET)
               .getPublicUrl(fullFilePath);
             
-            console.log('File detected:', fullFilePath);
+            console.log('  → ADDED: File');
             
             files.push({ 
               name: item.name, 
@@ -454,8 +480,9 @@
         }
       }
 
-      console.log('Final folders:', folders.map(f => f.name));
-      console.log('Final files:', files.map(f => f.name));
+      console.log('\n=== FOLDER SCAN RESULT ===');
+      console.log('Folders:', folders.map(f => f.name));
+      console.log('Files:', files.map(f => f.name));
 
       renderFolderContents(folders, files, cleanPath);
     }
@@ -489,7 +516,6 @@
         el.addEventListener('click', function(e) {
           e.preventDefault();
           e.stopPropagation();
-          console.log('Entering root folder:', folder.fullPath);
           navigateToFolder(folder.fullPath);
         });
         
@@ -509,7 +535,6 @@
       locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${escapeHtml(currentPath)} (${files.length} files, ${folders.length} folders)</div>`;
       $filesList.appendChild(locationInfo);
 
-      // Render subfolders first
       folders.forEach(folder => {
         const el = document.createElement('div');
         el.className = 'folder';
@@ -536,7 +561,6 @@
         $filesList.appendChild(el);
       });
 
-      // Render files
       files.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
@@ -552,7 +576,6 @@
         
         el.querySelector('a').addEventListener('click', function(e) {
           console.log('Opening file:', it.fullPath);
-          console.log('Using URL:', it.publicUrl);
         });
         
         $filesList.appendChild(el);
@@ -578,7 +601,6 @@
         if (i === parts.length - 1) {
           breadcrumbHtml += `<span>${escapeHtml(part)}</span>`;
         } else {
-          // FIXED: Use normalized path for breadcrumb navigation
           breadcrumbHtml += `<span onclick="navigateToFolder('${accumPath.slice(0, -1)}')">${escapeHtml(part)}</span> > `;
         }
       });
@@ -587,7 +609,9 @@
       document.getElementById('backToRoot').textContent = '📁 Root';
     }
 
+    // FIXED: Button refresh - simple reload of current view
     $btnRefresh.addEventListener('click', () => {
+      console.log('Button refresh clicked');
       if (currentPath === '') {
         loadRootFolders();
       } else {
@@ -595,9 +619,47 @@
       }
     });
 
+    // NEW: Handle page load completion
+    window.addEventListener('load', () => {
+      isPageLoaded = true;
+      console.log('Page fully loaded - enabling session timer');
+    });
+
     function escapeHtml(s) {
       return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     }
+
+    // Initialize - don't start timer until page is loaded
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      updateUiForUser(session?.user || null);
+    });
+
+    supabase.auth.onAuthStateChange((event, session) => {
+      updateUiForUser(session?.user || null);
+    });
+
+    $btnSignIn.addEventListener('click', async () => {
+      const email = $email.value.trim();
+      const password = $password.value;
+      if (!email || !password) return alert('Enter email and password');
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) return alert('Sign in error: ' + error.message);
+    });
+
+    $btnSignUp.addEventListener('click', async () => {
+      const email = $email.value.trim();
+      const password = $password.value;
+      if (!email || !password) return alert('Enter email and password');
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) return alert('Sign up error: ' + error.message);
+      else alert('Check your email to confirm (if required by your Supabase settings).');
+    });
+
+    $btnSignOut.addEventListener('click', async () => {
+      await supabase.auth.signOut();
+      $email.value = '';
+      $password.value = '';
+    });
 
     // Initialize
     updateUiForUser(null);
