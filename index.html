@@ -158,7 +158,7 @@
       $password.value = '';
     });
 
-    // FIXED: Load only actual folders at root level
+    // Load only actual folders at root level
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
@@ -176,7 +176,7 @@
           return;
         }
 
-        // FIXED: Detect folders by checking if they contain items (files or subfolders)
+        // Detect folders by checking if they contain items (files or subfolders)
         allFolders = [];
         const folderPromises = data.map(async (item) => {
           if (item.name.endsWith('/')) {
@@ -216,7 +216,7 @@
       updateBreadcrumb(currentPath);
     };
 
-    // Load contents of a specific folder
+    // FIXED: Load contents of a specific folder - get actual file sizes
     async function loadFolderContents(path) {
       $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
       
@@ -248,15 +248,37 @@
             // This is a subfolder
             folders.push({ name: item.name, fullPath: `${path}${item.name}/`, size: 0 });
           } else {
-            // This is a file
-            const fullFilePath = `${path}${item.name}`;
-            const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullFilePath).data.publicUrl;
-            files.push({ 
-              name: item.name, 
-              fullPath: fullFilePath, 
-              size: item.size || 0, 
-              publicUrl 
-            });
+            // This is a file - get actual size by fetching file details
+            try {
+              const fullFilePath = `${path}${item.name}`;
+              const { data: fileData, error: fileError } = await supabase.storage
+                .from(STORAGE_BUCKET)
+                .download(fullFilePath);
+              
+              let fileSize = 0;
+              if (!fileError && fileData) {
+                fileSize = fileData.size || 0; // Use actual file size from download
+              }
+              
+              const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullFilePath).data.publicUrl;
+              files.push({ 
+                name: item.name, 
+                fullPath: fullFilePath, 
+                size: fileSize, 
+                publicUrl 
+              });
+            } catch (err) {
+              console.error('Error getting file size:', err);
+              // Fallback: use 0 size if we can't get it
+              const fullFilePath = `${path}${item.name}`;
+              const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullFilePath).data.publicUrl;
+              files.push({ 
+                name: item.name, 
+                fullPath: fullFilePath, 
+                size: 0, 
+                publicUrl 
+              });
+            }
           }
         }
       }
@@ -311,7 +333,7 @@
       });
     }
 
-    // Render files + subfolders inside folders
+    // FIXED: Render files + subfolders inside folders - show proper sizes
     function renderFolderContents(folders, files, currentPath) {
       $filesList.innerHTML = '';
 
@@ -349,14 +371,15 @@
         $filesList.appendChild(el);
       });
 
-      // Render files
+      // Render files - FIXED: Show proper file sizes or "Unknown size"
       files.forEach(it => {
+        const fileSize = it.size > 0 ? formatBytes(it.size) : 'Unknown size';
         const el = document.createElement('div');
         el.className = 'file';
         el.innerHTML = `
           <div style="flex: 1;">
             <div style="font-weight:600">📄 ${escapeHtml(it.name)}</div>
-            <div class="meta">${formatBytes(it.size)}</div>
+            <div class="meta">${fileSize}</div>
           </div>
           <div class="actions">
             <a href="${it.publicUrl}" target="_blank" rel="noopener noreferrer">Open</a>
@@ -402,11 +425,10 @@
       }
     });
 
-    // Small helpers
+    // FIXED: Better file size formatting
     function formatBytes(bytes) {
-      if (!bytes && bytes !== 0) return '';
-      const sizes = ['B','KB','MB','GB','TB'];
-      if (bytes === 0) return '0 B';
+      if (!bytes || bytes === 0) return 'Unknown size';
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
       const i = Math.floor(Math.log(bytes) / Math.log(1024));
       return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
     }
