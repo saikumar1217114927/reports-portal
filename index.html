@@ -25,6 +25,11 @@
     .breadcrumb span{margin:0 4px;cursor:pointer;color:var(--accent)}
     .breadcrumb span:hover{text-decoration:underline}
     .hint{font-size:12px;color:var(--muted);margin-top:8px}
+    .session-timer{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:12px;color:var(--muted)}
+    .session-bar{background:rgba(255,255,255,.1);height:4px;border-radius:2px;overflow:hidden;margin-top:4px}
+    .session-progress{background:var(--accent);height:100%;transition:width 1s linear}
+    .session-warning{color:#f59e0b !important}
+    .session-expired{color:#ef4444 !important}
     @media(max-width:880px){.wrap{grid-template-columns:1fr;}}
   </style>
 </head>
@@ -45,11 +50,21 @@
         <div class="hint">This example uses <strong>Supabase</strong> (free tier). Replace the PROJECT_URL and ANON_KEY at the top of the script with yours.</div>
       </div>
       <div class="small">Status: <span id="status">not signed in</span></div>
+      
+      <!-- NEW: Session Timer -->
+      <div id="sessionTimer" class="session-timer" style="display:none">
+        <span id="timerText">Session expires in 10:00</span>
+        <div class="session-bar">
+          <div id="sessionProgress" class="session-progress" style="width:100%"></div>
+        </div>
+      </div>
+      
       <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
       <div class="small">Notes:
         <ul style="margin:6px 0 0 18px;padding:0;color:var(--muted)">
           <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator (I can show that).</li>
           <li>Files are listed from the bucket called <code>files</code>. Create that in Supabase Storage.</li>
+          <li><strong>Session expires after 10 minutes of inactivity</strong> - you'll need to sign in again for security.</li>
         </ul>
       </div>
     </section>
@@ -84,6 +99,12 @@
     const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
     const STORAGE_BUCKET = 'files';
+    
+    // NEW: Session timeout configuration
+    const SESSION_DURATION = 10 * 60 * 1000; // 10 minutes in milliseconds
+    let sessionStartTime = null;
+    let sessionTimeout = null;
+    let sessionInterval = null;
     // ------------------------------------------------
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -104,6 +125,11 @@
     const $breadcrumb = document.getElementById('breadcrumb');
     const $currentPath = document.getElementById('currentPath');
     const $currentLocation = document.getElementById('currentLocation');
+    
+    // NEW: Session timer elements
+    const $sessionTimer = document.getElementById('sessionTimer');
+    const $timerText = document.getElementById('timerText');
+    const $sessionProgress = document.getElementById('sessionProgress');
 
     async function updateUiForUser(user) {
       if (user) {
@@ -112,6 +138,11 @@
         $btnSignIn.style.display = 'none';
         $btnSignUp.style.display = 'none';
         $breadcrumb.style.display = 'block';
+        $sessionTimer.style.display = 'block';
+        
+        // NEW: Start session timer
+        startSessionTimer();
+        
         currentPath = '';
         await loadRootFolders();
       } else {
@@ -120,10 +151,112 @@
         $btnSignIn.style.display = 'inline-block';
         $btnSignUp.style.display = 'inline-block';
         $breadcrumb.style.display = 'none';
+        $sessionTimer.style.display = 'none';
         $currentLocation.textContent = 'Browse folders to view files';
         $filesList.innerHTML = '<div class="meta">Sign in to see folders.</div>';
         currentPath = '';
         allFolders = [];
+        
+        // NEW: Stop session timer
+        stopSessionTimer();
+      }
+    }
+
+    // NEW: Session management functions
+    function startSessionTimer() {
+      if (sessionTimeout) clearTimeout(sessionTimeout);
+      if (sessionInterval) clearInterval(sessionInterval);
+      
+      sessionStartTime = Date.now();
+      
+      // Set timeout for automatic logout
+      sessionTimeout = setTimeout(() => {
+        console.log('Session expired - auto-logging out');
+        handleSessionExpiry();
+      }, SESSION_DURATION);
+      
+      // Start countdown display
+      sessionInterval = setInterval(updateSessionDisplay, 1000);
+      
+      // Reset timer on user activity
+      document.addEventListener('click', resetSessionTimer);
+      document.addEventListener('keypress', resetSessionTimer);
+      document.addEventListener('mousemove', resetSessionTimer);
+      
+      updateSessionDisplay();
+    }
+
+    function stopSessionTimer() {
+      if (sessionTimeout) {
+        clearTimeout(sessionTimeout);
+        sessionTimeout = null;
+      }
+      if (sessionInterval) {
+        clearInterval(sessionInterval);
+        sessionInterval = null;
+      }
+      
+      document.removeEventListener('click', resetSessionTimer);
+      document.removeEventListener('keypress', resetSessionTimer);
+      document.removeEventListener('mousemove', resetSessionTimer);
+    }
+
+    function resetSessionTimer() {
+      if (!sessionStartTime) return;
+      
+      // Reset the session timeout
+      clearTimeout(sessionTimeout);
+      sessionTimeout = setTimeout(() => {
+        console.log('Session expired - auto-logging out');
+        handleSessionExpiry();
+      }, SESSION_DURATION);
+      
+      // Update display immediately
+      updateSessionDisplay();
+      
+      console.log('Session timer reset due to activity');
+    }
+
+    function updateSessionDisplay() {
+      if (!sessionStartTime) return;
+      
+      const elapsed = Date.now() - sessionStartTime;
+      const remaining = SESSION_DURATION - elapsed;
+      const progress = (remaining / SESSION_DURATION) * 100;
+      
+      if (remaining <= 0) {
+        $timerText.textContent = 'Session expired - logging out...';
+        $timerText.className = 'session-expired';
+        $sessionProgress.style.width = '0%';
+        return;
+      }
+      
+      // Format time (MM:SS)
+      const minutes = Math.floor(remaining / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      const timeText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      
+      // Warning color when < 2 minutes remaining
+      if (remaining <= 120000) { // 2 minutes
+        $timerText.className = 'session-warning';
+        $timerText.textContent = `Session expires in ${timeText} ⚠️`;
+      } else {
+        $timerText.className = '';
+        $timerText.textContent = `Session expires in ${timeText}`;
+      }
+      
+      $sessionProgress.style.width = `${progress}%`;
+    }
+
+    // NEW: Handle session expiry
+    async function handleSessionExpiry() {
+      // Show warning modal
+      if (confirm('Your session has expired for security reasons. You will be logged out. Click OK to continue.')) {
+        await supabase.auth.signOut();
+        // onAuthStateChange will handle the UI update
+      } else {
+        // User clicked Cancel - force logout anyway
+        await supabase.auth.signOut();
       }
     }
 
@@ -158,7 +291,7 @@
       $password.value = '';
     });
 
-    // FIXED: Load only actual folders at root level
+    // Load only actual folders at root level
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
@@ -175,27 +308,24 @@
           return;
         }
 
-        // FIXED: Simple folder detection - any item that has contents is a folder
         allFolders = [];
         for (const item of data) {
-          console.log('Checking root item:', item.name); // Debug
+          console.log('Checking root item:', item.name);
           
-          // If it ends with /, it's definitely a folder
           if (item.name.endsWith('/')) {
             allFolders.push({ name: item.name, isFolder: true });
             continue;
           }
           
-          // Check if it has contents (is actually a folder)
           const { data: contents, error: checkError } = await supabase.storage.from(STORAGE_BUCKET).list(item.name, { limit: 1 });
-          console.log(`Contents of ${item.name}:`, contents?.length || 0); // Debug
+          console.log(`Contents of ${item.name}:`, contents?.length || 0);
           
           if (!checkError && contents && contents.length > 0) {
             allFolders.push({ name: item.name, isFolder: true });
           }
         }
 
-        console.log('Found folders:', allFolders); // Debug
+        console.log('Found folders:', allFolders);
 
         if (allFolders.length === 0) {
           $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
@@ -212,19 +342,18 @@
 
     // Navigate to folder - stays in UI
     window.navigateToFolder = async function(path) {
-      currentPath = path.endsWith('/') ? path.slice(0, -1) : path; // Remove trailing slash for consistency
-      console.log('Navigating to path:', currentPath); // Debug
+      currentPath = path.endsWith('/') ? path.slice(0, -1) : path;
+      console.log('Navigating to path:', currentPath);
       await loadFolderContents(currentPath);
       updateBreadcrumb(currentPath);
     };
 
-    // FIXED: Load contents of a specific folder - proper detection
+    // Load contents of a specific folder - proper detection
     async function loadFolderContents(path) {
       $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
       
-      console.log('Loading contents of:', path); // Debug
+      console.log('Loading contents of:', path);
       
-      // FIXED: List without trailing slash
       const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(path, { limit: 1000 });
       if (error) {
         $filesList.innerHTML = '<div class="meta">Error loading folder: ' + error.message + '</div>';
@@ -232,7 +361,7 @@
         return;
       }
       
-      console.log('Raw folder contents:', data); // Debug
+      console.log('Raw folder contents:', data);
       
       if (!data || data.length === 0) {
         $filesList.innerHTML = '<div class="meta">This folder is empty.</div>';
@@ -242,38 +371,31 @@
       const folders = [];
       const files = [];
       
-      // Process each item in the folder
       for (const item of data) {
-        console.log('Processing item:', item.name); // Debug
+        console.log('Processing item:', item.name);
         
         if (item.name.endsWith('/')) {
-          // This is a subfolder
           const folderName = item.name.slice(0, -1);
           folders.push({ 
             name: folderName, 
             fullPath: `${path}/${folderName}` 
           });
         } else {
-          // FIXED: Check if this item contains other items (is a subfolder)
-          // Don't add trailing slash when checking
           const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(`${path}/${item.name}`, { limit: 1 });
           
           if (contents && contents.length > 0) {
-            // This is a subfolder
             folders.push({ 
               name: item.name, 
               fullPath: `${path}/${item.name}` 
             });
           } else {
-            // This is definitely a file
             const fullFilePath = `${path}/${item.name}`;
             
-            // FIXED: Use getPublicUrl with proper encoding
             const { data: urlData } = supabase.storage
               .from(STORAGE_BUCKET)
               .getPublicUrl(fullFilePath);
             
-            console.log('File detected:', fullFilePath, 'URL:', urlData.publicUrl); // Debug
+            console.log('File detected:', fullFilePath, 'URL:', urlData.publicUrl);
             
             files.push({ 
               name: item.name, 
@@ -285,7 +407,7 @@
         }
       }
 
-      console.log('Folders found:', folders.length, 'Files found:', files.length); // Debug
+      console.log('Folders found:', folders.length, 'Files found:', files.length);
 
       renderFolderContents(folders, files, path);
     }
@@ -343,7 +465,6 @@
       locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${escapeHtml(displayPath)} (${files.length} files, ${folders.length} folders)</div>`;
       $filesList.appendChild(locationInfo);
 
-      // Render subfolders first
       folders.forEach(folder => {
         const el = document.createElement('div');
         el.className = 'folder';
@@ -370,7 +491,6 @@
         $filesList.appendChild(el);
       });
 
-      // Render files
       files.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
