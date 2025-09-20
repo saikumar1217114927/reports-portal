@@ -15,11 +15,13 @@
     .small{font-size:13px;color:var(--muted);margin-top:10px}
     .files{padding:12px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));height:560px;overflow:auto}
     .search{display:flex;gap:8px;align-items:center;margin-bottom:12px}
-    .file{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .file{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;transition:background 0.2s}
     .folder{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;background:rgba(6,182,212,.1)}
     .folder:hover{cursor:pointer;background:rgba(6,182,212,.2)}
+    .file:hover{background:rgba(6,182,212,.05)}
     .meta{font-size:13px;color:var(--muted)}
-    .actions a{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.03);text-decoration:none;color:var(--white);font-size:13px}
+    .actions a{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.03);text-decoration:none;color:var(--white);font-size:13px;transition:background 0.2s}
+    .actions a:hover{background:rgba(255,255,255,.1)}
     .top-actions{display:flex;gap:8px;align-items:center}
     .breadcrumb{margin-bottom:12px;padding:8px;border-radius:8px;background:rgba(255,255,255,.02)}
     .breadcrumb span{margin:0 4px;cursor:pointer;color:var(--accent)}
@@ -30,6 +32,29 @@
     .session-progress{background:var(--accent);height:100%;transition:width 1s linear}
     .session-warning{color:#f59e0b !important}
     .session-expired{color:#ef4444 !important}
+    
+    /* Action button styles */
+    .action-btn {
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.05);
+      text-decoration: none;
+      color: var(--white);
+      font-size: 12px;
+      font-weight: 500;
+      transition: background 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .action-btn:hover {
+      background: rgba(255,255,255,0.1);
+    }
+    .actions.enhanced {
+      display: flex;
+      gap: 4px;
+    }
+    
     @media(max-width:880px){.wrap{grid-template-columns:1fr;}}
   </style>
 </head>
@@ -138,36 +163,48 @@
     const $timerText = document.getElementById('timerText');
     const $sessionProgress = document.getElementById('sessionProgress');
 
-    // FIXED: Proper URL generation for nested files
+    // IMPROVED: Enhanced URL generation with better error handling
     function generateFileUrl(bucket, filePath) {
       try {
-        // Split path into folder parts and filename
-        const pathParts = filePath.split('/');
-        const filename = pathParts.pop(); // Get filename
-        const folderPath = pathParts.join('/'); // Get folder path
+        // Clean the file path - remove multiple slashes and trim
+        const cleanPath = filePath.replace(/\/+/g, '/').replace(/^\/+|\/+$/g, '');
         
         console.log('Generating URL for:', {
           bucket,
           fullPath: filePath,
-          folderPath,
-          filename
+          cleanPath
         });
         
-        // Use getPublicUrl with the full path
+        // Use Supabase's getPublicUrl method
         const { data } = supabase.storage
           .from(bucket)
-          .getPublicUrl(filePath);
+          .getPublicUrl(cleanPath);
         
-        console.log('Generated URL:', data.publicUrl);
-        return data.publicUrl;
+        // Ensure the URL is properly formed
+        if (data && data.publicUrl) {
+          console.log('Generated URL:', data.publicUrl);
+          return data.publicUrl;
+        } else {
+          throw new Error('No public URL generated');
+        }
       } catch (error) {
         console.error('Error generating file URL:', error);
         
-        // Fallback: Manual URL construction with proper encoding
-        const encodedPath = encodeURIComponent(filePath);
+        // Fallback: Construct URL manually with proper encoding
+        const encodedPath = encodeURIComponent(filePath.replace(/\/+/g, '/'));
         const fallbackUrl = `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodedPath}`;
         console.log('Using fallback URL:', fallbackUrl);
         return fallbackUrl;
+      }
+    }
+
+    // Helper to test URL validity without CORS issues
+    function isValidUrl(string) {
+      try {
+        const url = new URL(string);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+      } catch (_) {
+        return false;
       }
     }
 
@@ -460,7 +497,7 @@
       }
     }
 
-    // FIXED: Load root folders
+    // Load root folders
     async function loadRootFolders() {
       $filesList.innerHTML = '<div class="meta">Loading folders...</div>';
       
@@ -552,7 +589,7 @@
       }
     }
 
-    // FIXED: Navigate to folder
+    // Navigate to folder
     window.navigateToFolder = async function(path) {
       currentPath = normalizeFolderName(path);
       console.log('Navigating to:', currentPath);
@@ -560,7 +597,7 @@
       updateBreadcrumb(currentPath);
     };
 
-    // FIXED: Load folder contents with proper URL generation
+    // Load folder contents with proper URL generation
     async function loadFolderContents(path) {
       $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
       
@@ -616,10 +653,10 @@
             });
             console.log('  → ADDED: Nested subfolder');
           } else {
-            // FIXED: This is a file - generate proper URL
+            // This is a file - generate proper URL
             const fullFilePath = `${cleanPath}/${item.name}`;
             
-            // FIXED: Use the new URL generation function
+            // Use the improved URL generation function
             const publicUrl = generateFileUrl(STORAGE_BUCKET, fullFilePath);
             
             console.log(`  → ADDED: File "${item.name}"`);
@@ -682,6 +719,7 @@
       });
     }
 
+    // FIXED: Enhanced file rendering with reliable URL handling
     function renderFolderContents(folders, files, currentPath) {
       $filesList.innerHTML = '';
 
@@ -690,6 +728,7 @@
       locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${escapeHtml(currentPath)} (${files.length} files, ${folders.length} folders)</div>`;
       $filesList.appendChild(locationInfo);
 
+      // Render folders
       folders.forEach(folder => {
         const el = document.createElement('div');
         el.className = 'folder';
@@ -716,47 +755,92 @@
         $filesList.appendChild(el);
       });
 
-      // FIXED: Enhanced file rendering with URL validation
+      // FIXED: Enhanced file rendering with reliable URL validation and opening
       files.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
         
-        // FIXED: Test the URL before rendering
-        const testUrl = new URL(it.publicUrl);
-        console.log(`Rendering file: "${it.name}" with URL: "${it.publicUrl}"`);
+        // Validate URL format
+        const isValid = isValidUrl(it.publicUrl);
+        console.log(`Rendering file: "${it.name}" with URL: "${it.publicUrl}" (Valid: ${isValid})`);
         
         el.innerHTML = `
           <div style="flex: 1;">
             <div style="font-weight:600">📄 ${escapeHtml(it.name)}</div>
             <div class="meta">File</div>
           </div>
-          <div class="actions">
-            <a href="${it.publicUrl}" target="_blank" rel="noopener noreferrer">Open</a>
+          <div class="actions enhanced">
+            <a href="${it.publicUrl}" target="_blank" rel="noopener noreferrer" class="action-btn" data-action="open">👁️ Open</a>
+            <a href="${it.publicUrl}" download="${escapeHtml(it.name)}" class="action-btn" data-action="download">⬇️ Download</a>
           </div>
         `;
         
-        // Add click handler with error handling
-        el.querySelector('a').addEventListener('click', function(e) {
-          console.log('File clicked:', it.name);
-          console.log('Opening URL:', it.publicUrl);
-          
-          // Test if URL is valid before opening
-          fetch(it.publicUrl, { method: 'HEAD' })
-            .then(response => {
-              if (response.ok) {
-                console.log('URL is valid - opening file');
-                window.open(it.publicUrl, '_blank');
-              } else {
-                console.error('URL returned status:', response.status);
-                alert(`File not found: ${it.name}`);
-              }
-            })
-            .catch(err => {
-              console.error('URL fetch error:', err);
-              alert(`Error accessing file: ${it.name}`);
-            });
+        // Add reliable click handlers
+        el.querySelectorAll('a').forEach(link => {
+          link.addEventListener('click', function(e) {
+            const action = this.dataset.action;
+            console.log(`${action.toUpperCase()} clicked for:`, it.name);
+            console.log('URL:', it.publicUrl);
             
-          e.preventDefault(); // Prevent default navigation
+            if (!isValid) {
+              e.preventDefault();
+              console.error('Invalid URL format for file:', it.name);
+              alert(`Cannot access file: ${it.name}\n\nThe file URL is not properly formatted. Please contact support.`);
+              return;
+            }
+            
+            // For download, let the browser handle it naturally
+            if (action === 'download') {
+              // Add filename to URL params for better download experience
+              const downloadUrl = `${it.publicUrl}${it.publicUrl.includes('?') ? '&' : '?'}download=true`;
+              this.href = downloadUrl;
+              console.log('Download URL:', downloadUrl);
+              return; // Let the browser handle the download
+            }
+            
+            // For open, use programmatic approach to avoid issues
+            if (action === 'open') {
+              e.preventDefault();
+              
+              // Create and trigger a new link element
+              const tempLink = document.createElement('a');
+              tempLink.href = it.publicUrl;
+              tempLink.target = '_blank';
+              tempLink.rel = 'noopener noreferrer';
+              
+              try {
+                // Trigger the click
+                tempLink.click();
+                console.log(`File opened successfully: ${it.name}`);
+                
+                // Show success feedback
+                const originalText = this.textContent;
+                this.textContent = '✅ Opened';
+                this.style.background = 'rgba(34, 197, 94, 0.2)';
+                setTimeout(() => {
+                  this.textContent = originalText;
+                  this.style.background = '';
+                }, 1500);
+                
+              } catch (clickError) {
+                console.error('Error opening file:', clickError);
+                // Fallback to window.open
+                const opened = window.open(it.publicUrl, '_blank');
+                if (!opened) {
+                  alert(`Please allow popups to open: ${it.name}`);
+                }
+              }
+            }
+          });
+        });
+        
+        // Add hover effects
+        el.addEventListener('mouseenter', () => {
+          el.style.background = 'rgba(6,182,212,0.05)';
+        });
+        
+        el.addEventListener('mouseleave', () => {
+          el.style.background = '';
         });
         
         $filesList.appendChild(el);
