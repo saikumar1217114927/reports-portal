@@ -1,171 +1,335 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Supabase Storage Browser</title>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>File Portal — Login + File List</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-    .hidden { display: none; }
-    button { padding: 8px 12px; margin: 5px; cursor: pointer; }
-    .file-list { list-style: none; padding: 0; }
-    .file-list li { padding: 10px; border-bottom: 1px solid #eee; }
-    .folder { background: #f0f8ff; cursor: pointer; color: blue; }
-    .folder:hover { background: #e6f3ff; }
-    .file { color: green; }
-    .file a { text-decoration: none; color: inherit; }
-    .breadcrumb { margin: 10px 0; }
-    .breadcrumb span { cursor: pointer; color: blue; margin-right: 5px; }
-    .breadcrumb span:hover { text-decoration: underline; }
-    #status { margin: 10px 0; color: #666; }
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--white:#e6eef6}
+    body{font-family:Inter,ui-sans-serif,system-ui,Arial;background:linear-gradient(180deg,#07101a, #081826);color:var(--white);min-height:100vh;margin:0;display:flex;align-items:center;justify-content:center;padding:24px}
+    .wrap{width:100%;max-width:980px;background:var(--card);border-radius:12px;box-shadow:0 10px 30px rgba(2,6,23,.6);padding:20px;display:grid;grid-template-columns:340px 1fr;gap:20px}
+    h1{margin:0 0 10px 0;font-size:20px}
+    label{display:block;font-size:13px;color:var(--muted);margin-top:12px}
+    input[type=text],input[type=password],input[type=email]{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.02);color:var(--white)}
+    button{margin-top:14px;padding:10px 12px;border-radius:8px;border:0;background:var(--accent);color:#022;cursor:pointer;font-weight:600}
+    .small{font-size:13px;color:var(--muted);margin-top:10px}
+    .files{padding:12px;border-radius:10px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));height:560px;overflow:auto}
+    .search{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+    .file{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .folder{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.03);display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;background:rgba(6,182,212,.1)}
+    .folder:hover{cursor:pointer;background:rgba(6,182,212,.2)}
+    .meta{font-size:13px;color:var(--muted)}
+    .actions a{padding:6px 8px;border-radius:6px;background:rgba(255,255,255,.03);text-decoration:none;color:var(--white);font-size:13px}
+    .top-actions{display:flex;gap:8px;align-items:center}
+    .breadcrumb{margin-bottom:12px;padding:8px;border-radius:8px;background:rgba(255,255,255,.02)}
+    .breadcrumb span{margin:0 4px;cursor:pointer;color:var(--accent)}
+    .breadcrumb span:hover{text-decoration:underline}
+    .hint{font-size:12px;color:var(--muted);margin-top:8px}
+    @media(max-width:880px){.wrap{grid-template-columns:1fr;}}
   </style>
 </head>
 <body>
-  <!-- Your existing HTML structure -->
-  <div id="auth">
-    <h3>Sign in / Sign up</h3>
-    <input type="email" id="email" placeholder="Email" />
-    <input type="password" id="password" placeholder="Password" />
-    <button id="signIn">Sign in</button>
-    <button id="createAccount">Create account</button>
-    <button id="signOut" class="hidden">Sign out</button>
-    <p>This example uses Supabase (free tier). Replace the PROJECT_URL and ANON_KEY at the top of the script with yours.</p>
+  <div class="wrap">
+    <section>
+      <h1>Sign in / Sign up</h1>
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="you@example.com" />
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="••••••••" />
+        <div style="display:flex;gap:8px">
+          <button id="btnSignIn">Sign in</button>
+          <button id="btnSignUp">Create account</button>
+        </div>
+        <button id="btnSignOut" style="display:none;background:#ef4444;color:#fff">Sign out</button>
+        <div class="hint">This example uses <strong>Supabase</strong> (free tier). Replace the PROJECT_URL and ANON_KEY at the top of the script with yours.</div>
+      </div>
+      <div class="small">Status: <span id="status">not signed in</span></div>
+      <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
+      <div class="small">Notes:
+        <ul style="margin:6px 0 0 18px;padding:0;color:var(--muted)">
+          <li>Bucket in this example must be <strong>public</strong> so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator (I can show that).</li>
+          <li>Files are listed from the bucket called <code>files</code>. Create that in Supabase Storage.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section>
+      <div class="top-actions" style="justify-content:space-between;align-items:center">
+        <div>
+          <h1 style="font-size:18px">Files</h1>
+          <div class="small">Browse files available to authenticated users</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="search" type="text" placeholder="Search files by name" />
+          <button id="btnRefresh">Refresh</button>
+        </div>
+      </div>
+
+      <div id="breadcrumb" class="breadcrumb" style="display:none">
+        <span id="backToRoot" onclick="navigateToFolder('')">📁 Root</span>
+        <span id="currentPath"></span>
+      </div>
+
+      <div class="files" id="filesList">
+        <!-- files will appear here -->
+      </div>
+    </section>
   </div>
 
-  <div id="status">Status: not signed in</div>
-
-  <div class="notes">
-    <p>Notes:</p>
-    <ul>
-      <li>Bucket in this example must be public so the client can get file URLs directly. For private files, you'll need a server-side signed URL generator (I can show that).</li>
-      <li>Files are listed from the bucket called files. Create that in Supabase Storage.</li>
-    </ul>
-  </div>
-
-  <div id="fileBrowser" class="hidden">
-    <h3>Files</h3>
-    <p>Browse files available to authenticated users</p>
-    <button id="refresh">Refresh</button>
-    <div id="breadcrumb" class="breadcrumb"></div>
-    <ul id="fileList" class="file-list"></ul>
-  </div>
-
+  <!-- supabase-js CDN (v2) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
-    // Update with your Supabase config
-    const PROJECT_URL = 'https://your-project.supabase.co'; // Replace
-    const ANON_KEY = 'your-anon-key'; // Replace
+    // -------------------- CONFIG --------------------
+    // Replace these with your Supabase project's values
+    const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
+    const STORAGE_BUCKET = 'files'; // name of bucket in Supabase Storage
+    // ------------------------------------------------
 
-    const supabase = Supabase.createClient(PROJECT_URL, ANON_KEY);
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    let currentPath = ''; // Track current folder path
+    // State for folder navigation
+    let currentPath = '';
+    let allFilesCache = []; // Cache for search across all files
 
-    // Auth handlers
-    document.getElementById('signIn').addEventListener('click', async () => {
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) alert(error.message);
-      else updateUI();
-    });
+    const $email = document.getElementById('email');
+    const $password = document.getElementById('password');
+    const $status = document.getElementById('status');
+    const $btnSignIn = document.getElementById('btnSignIn');
+    const $btnSignUp = document.getElementById('btnSignUp');
+    const $btnSignOut = document.getElementById('btnSignOut');
+    const $filesList = document.getElementById('filesList');
+    const $search = document.getElementById('search');
+    const $btnRefresh = document.getElementById('btnRefresh');
+    const $breadcrumb = document.getElementById('breadcrumb');
+    const $currentPath = document.getElementById('currentPath');
 
-    document.getElementById('createAccount').addEventListener('click', async () => {
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) alert(error.message);
-    });
-
-    document.getElementById('signOut').addEventListener('click', async () => {
-      await supabase.auth.signOut();
-      updateUI();
-    });
-
-    // File browser handlers
-    document.getElementById('refresh').addEventListener('click', () => loadFiles(currentPath));
-
-    async function updateUI() {
-      const { data: { session } } = await supabase.auth.getSession();
-      const status = document.getElementById('status');
-      const auth = document.getElementById('auth');
-      const signOut = document.getElementById('signOut');
-      const fileBrowser = document.getElementById('fileBrowser');
-
-      if (session) {
-        status.textContent = `Status: signed in as ${session.user.email}`;
-        auth.classList.add('hidden');
-        signOut.classList.remove('hidden');
-        fileBrowser.classList.remove('hidden');
-        loadFiles(currentPath); // Load root on sign-in
+    async function updateUiForUser(user) {
+      if (user) {
+        $status.textContent = `signed in as ${user.email}`;
+        $btnSignOut.style.display = 'inline-block';
+        $btnSignIn.style.display = 'none';
+        $btnSignUp.style.display = 'none';
+        $breadcrumb.style.display = 'block';
+        await loadFiles(currentPath);
+        await cacheAllFiles(); // Load all files for search
       } else {
-        status.textContent = 'Status: not signed in';
-        auth.classList.remove('hidden');
-        signOut.classList.add('hidden');
-        fileBrowser.classList.add('hidden');
+        $status.textContent = 'not signed in';
+        $btnSignOut.style.display = 'none';
+        $btnSignIn.style.display = 'inline-block';
+        $btnSignUp.style.display = 'inline-block';
+        $breadcrumb.style.display = 'none';
+        $filesList.innerHTML = '<div class="meta">Sign in to see files.</div>';
+        currentPath = '';
+        allFilesCache = [];
       }
     }
 
-    async function loadFiles(path) {
-      const { data, error } = await supabase.storage.from('files').list(path, { limit: 100 });
+    // FIXED: Get initial session properly
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      updateUiForUser(session?.user || null);
+    });
+
+    // FIXED: Auth state change - use session.user
+    supabase.auth.onAuthStateChange((event, session) => {
+      updateUiForUser(session?.user || null);
+    });
+
+    $btnSignIn.addEventListener('click', async () => {
+      const email = $email.value.trim();
+      const password = $password.value;
+      if (!email || !password) return alert('Enter email and password');
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) return alert('Sign in error: ' + error.message);
+    });
+
+    $btnSignUp.addEventListener('click', async () => {
+      const email = $email.value.trim();
+      const password = $password.value;
+      if (!email || !password) return alert('Enter email and password');
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) return alert('Sign up error: ' + error.message);
+      else alert('Check your email to confirm (if required by your Supabase settings).');
+    });
+
+    $btnSignOut.addEventListener('click', async () => {
+      await supabase.auth.signOut();
+      $email.value = '';
+      $password.value = '';
+    });
+
+    // NEW: Navigate to folder (stays in same tab)
+    window.navigateToFolder = async function(path) {
+      currentPath = path;
+      await loadFiles(currentPath);
+      updateBreadcrumb();
+    };
+
+    // NEW: Cache all files for global search
+    async function cacheAllFiles() {
+      try {
+        const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
+        if (error) {
+          console.error('Error caching files:', error);
+          return;
+        }
+        allFilesCache = data.map(f => {
+          const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(f.name).data.publicUrl;
+          return { name: f.name, id: f.name, size: f.size, publicUrl };
+        });
+      } catch (err) {
+        console.error('Error caching files:', err);
+      }
+    }
+
+    async function loadFiles(path = '') {
+      $filesList.innerHTML = '<div class="meta">Loading files…</div>';
+      
+      const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(path, { limit: 1000 });
       if (error) {
-        alert(`Error loading files: ${error.message}`);
+        $filesList.innerHTML = '<div class="meta">Error listing files: ' + error.message + '</div>';
+        return;
+      }
+      if (!data || data.length === 0) {
+        $filesList.innerHTML = '<div class="meta">No files found in this folder.</div>';
         return;
       }
 
-      // Render breadcrumb
-      renderBreadcrumb(path);
+      // Separate folders and files
+      const folders = data.filter(f => f.name.endsWith('/'));
+      const files = data.filter(f => !f.name.endsWith('/')).map(f => {
+        const fullPath = path ? `${path}/${f.name}` : f.name;
+        const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullPath).data.publicUrl;
+        return { name: f.name, id: fullPath, size: f.size, publicUrl };
+      });
 
-      // Render list
-      const fileList = document.getElementById('fileList');
-      fileList.innerHTML = '';
-      data.forEach(item => {
-        const li = document.createElement('li');
-        if (item.name.endsWith('/')) {
-          // Folder
-          li.classList.add('folder');
-          li.textContent = `[FOLDER] ${item.name.slice(0, -1)}`;
-          li.onclick = () => navigateToFolder(path ? `${path}${item.name}` : item.name);
-        } else {
-          // File
-          li.classList.add('file');
-          const url = supabase.storage.from('files').getPublicUrl(`${path}${item.name}`).data.publicUrl;
-          const a = document.createElement('a');
-          a.href = url;
-          a.target = '_self'; // Open in same tab (prevents new tab)
-          a.textContent = `[FILE] ${item.name} (${(item.metadata?.size || 0) / 1024} KB)`;
-          a.download = item.name; // Fallback to download if not previewable
-          li.appendChild(a);
-        }
-        fileList.appendChild(li);
+      renderFiles(folders, files, path);
+      updateBreadcrumb(path);
+    }
+
+    function renderFiles(folders, files, currentPath) {
+      const q = $search.value.trim().toLowerCase();
+      let filteredFolders = folders;
+      let filteredFiles = files;
+
+      // If searching, filter from cache (search across all files)
+      if (q) {
+        const searchMatches = allFilesCache.filter(item => 
+          item.name.toLowerCase().includes(q)
+        );
+        filteredFiles = searchMatches;
+        filteredFolders = []; // Hide folders during search
+      }
+
+      if (filteredFolders.length === 0 && filteredFiles.length === 0) {
+        $filesList.innerHTML = '<div class="meta">No files match your search.</div>';
+        return;
+      }
+
+      $filesList.innerHTML = '';
+
+      // Render folders first
+      filteredFolders.forEach(folder => {
+        const folderName = folder.name.slice(0, -1); // Remove trailing '/'
+        const fullPath = currentPath ? `${currentPath}/${folder.name}` : folder.name;
+        const el = document.createElement('div');
+        el.className = 'folder';
+        el.innerHTML = `
+          <div>
+            <div style="font-weight:600">📁 ${escapeHtml(folderName)}</div>
+            <div class="meta">Folder</div>
+          </div>
+          <div class="actions">
+            <span style="color:var(--muted);font-size:12px">Click to enter</span>
+          </div>
+        `;
+        el.onclick = (e) => {
+          e.preventDefault();
+          navigateToFolder(fullPath);
+        };
+        $filesList.appendChild(el);
+      });
+
+      // Render files
+      filteredFiles.forEach(it => {
+        const el = document.createElement('div');
+        el.className = 'file';
+        el.innerHTML = `
+          <div>
+            <div style="font-weight:600">📄 ${escapeHtml(it.name)}</div>
+            <div class="meta">${formatBytes(it.size)}</div>
+          </div>
+          <div class="actions">
+            <a href="${it.publicUrl}" target="_blank" rel="noopener">Open</a>
+          </div>
+        `;
+        $filesList.appendChild(el);
       });
     }
 
-    function navigateToFolder(newPath) {
-      currentPath = newPath;
-      loadFiles(currentPath);
-    }
-
-    function renderBreadcrumb(path) {
-      const breadcrumb = document.getElementById('breadcrumb');
+    function updateBreadcrumb(path = '') {
       if (!path) {
-        breadcrumb.innerHTML = '<strong>Root</strong>';
+        $currentPath.innerHTML = '';
+        $backToRoot.textContent = '📁 Root';
         return;
       }
 
-      // Simple split by '/' (assumes no spaces/special chars)
+      // Build breadcrumb from path
       const parts = path.split('/').filter(p => p);
-      let html = '<span onclick="navigateToFolder(\'\')">Root</span>';
+      let breadcrumbHtml = '';
       let accumPath = '';
+      
       parts.forEach((part, i) => {
         accumPath += part + '/';
-        html += ` > <span onclick="navigateToFolder('${accumPath}')">${part}</span>`;
+        if (i === parts.length - 1) {
+          breadcrumbHtml += `<span>${escapeHtml(part)}</span>`;
+        } else {
+          breadcrumbHtml += `<span onclick="navigateToFolder('${accumPath}')">${escapeHtml(part)}</span> > `;
+        }
       });
-      breadcrumb.innerHTML = html;
+      
+      $currentPath.innerHTML = breadcrumbHtml;
+      $backToRoot.textContent = '📁 Root';
     }
 
-    // Init on load
-    updateUI();
-    supabase.auth.onAuthStateChange(updateUI);
+    // Event listeners
+    $search.addEventListener('input', debounce(() => {
+      loadFiles(currentPath);
+    }, 300));
+
+    $btnRefresh.addEventListener('click', () => {
+      loadFiles(currentPath);
+    });
+
+    // Debounce helper for search
+    function debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    }
+
+    // Small helpers
+    function formatBytes(bytes) {
+      if (!bytes && bytes !== 0) return '';
+      const sizes = ['B','KB','MB','GB','TB'];
+      if (bytes === 0) return '0 B';
+      const i = Math.floor(Math.log(bytes) / Math.log(1024));
+      return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+    }
+    
+    function escapeHtml(s) {
+      return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    }
+
+    // Initialize
+    updateUiForUser(null);
   </script>
 </body>
 </html>
