@@ -58,10 +58,10 @@
       <div class="top-actions" style="justify-content:space-between;align-items:center">
         <div>
           <h1 style="font-size:18px">Files</h1>
-          <div class="small" id="currentLocation">Browse files available to authenticated users</div>
+          <div class="small" id="currentLocation">Browse folders to view files</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
-          <input id="search" type="text" placeholder="Search files by name" />
+          <input id="search" type="text" placeholder="Search files by name" style="display:none" />
           <button id="btnRefresh">Refresh</button>
         </div>
       </div>
@@ -81,17 +81,16 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     // -------------------- CONFIG --------------------
-    // Replace these with your Supabase project's values
     const SUPABASE_URL = 'https://kplpwlfoyexfgfenewit.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtwbHB3bGZveWV4ZmdmZW5ld2l0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc2NzE0MDIsImV4cCI6MjA3MzI0NzQwMn0.tlp8K3OYGo2anGdiAi7iq9Yz-5O00sjGUIhC9vXjZjY';
-    const STORAGE_BUCKET = 'files'; // name of bucket in Supabase Storage
+    const STORAGE_BUCKET = 'files';
     // ------------------------------------------------
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // State for folder navigation
     let currentPath = '';
-    let allFilesCache = []; // Cache for search across all files
+    let isRootLevel = true; // Track if we're at root (show only folders)
 
     const $email = document.getElementById('email');
     const $password = document.getElementById('password');
@@ -113,27 +112,26 @@
         $btnSignIn.style.display = 'none';
         $btnSignUp.style.display = 'none';
         $breadcrumb.style.display = 'block';
+        currentPath = ''; // Reset to root
+        isRootLevel = true;
         await loadFiles(currentPath);
-        await cacheAllFiles(); // Load all files for search
       } else {
         $status.textContent = 'not signed in';
         $btnSignOut.style.display = 'none';
         $btnSignIn.style.display = 'inline-block';
         $btnSignUp.style.display = 'inline-block';
         $breadcrumb.style.display = 'none';
-        $currentLocation.textContent = 'Browse files available to authenticated users';
-        $filesList.innerHTML = '<div class="meta">Sign in to see files.</div>';
+        $currentLocation.textContent = 'Browse folders to view files';
+        $filesList.innerHTML = '<div class="meta">Sign in to see folders.</div>';
         currentPath = '';
-        allFilesCache = [];
+        isRootLevel = true;
       }
     }
 
-    // FIXED: Get initial session properly
     supabase.auth.getSession().then(({ data: { session } }) => {
       updateUiForUser(session?.user || null);
     });
 
-    // FIXED: Auth state change - use session.user
     supabase.auth.onAuthStateChange((event, session) => {
       updateUiForUser(session?.user || null);
     });
@@ -161,88 +159,105 @@
       $password.value = '';
     });
 
-    // FIXED: Navigate to folder (stays in same tab - NO REDIRECT)
+    // Navigate to folder - stays in UI
     window.navigateToFolder = async function(path) {
-      console.log('Navigating to:', path); // Debug log
       currentPath = path;
+      isRootLevel = false;
       await loadFiles(currentPath);
       updateBreadcrumb();
     };
 
-    // FIXED: Cache all files for global search
-    async function cacheAllFiles() {
-      try {
-        const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list('', { limit: 1000 });
-        if (error) {
-          console.error('Error caching files:', error);
-          return;
-        }
-        allFilesCache = data.filter(f => !f.name.endsWith('/')).map(f => {
-          const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(f.name).data.publicUrl;
-          return { name: f.name, id: f.name, size: f.size, publicUrl };
-        });
-      } catch (err) {
-        console.error('Error caching files:', err);
-      }
-    }
-
     async function loadFiles(path = '') {
-      $filesList.innerHTML = '<div class="meta">Loading files…</div>';
+      $filesList.innerHTML = '<div class="meta">Loading...</div>';
       
       const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(path, { limit: 1000 });
       if (error) {
-        $filesList.innerHTML = '<div class="meta">Error listing files: ' + error.message + '</div>';
+        $filesList.innerHTML = '<div class="meta">Error loading: ' + error.message + '</div>';
         console.error('Load files error:', error);
         return;
       }
       
       if (!data || data.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files found in this folder.</div>';
+        $filesList.innerHTML = '<div class="meta">No folders or files found.</div>';
         return;
       }
 
-      // Separate folders and files - FIXED: Proper path handling
-      const folders = data.filter(f => f.name.endsWith('/'));
-      const files = data.filter(f => !f.name.endsWith('/')).map(f => {
-        // FIXED: Correct full path construction for files
-        const fullFilePath = path ? `${path}/${f.name}` : f.name;
-        const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullFilePath).data.publicUrl;
-        return { 
-          name: f.name, 
-          fullPath: fullFilePath, 
-          size: f.size, 
-          publicUrl 
-        };
-      });
-
-      renderFiles(folders, files, path);
-      updateBreadcrumb(path);
+      // KEY CHANGE: At root level, show ONLY folders. In subfolders, show files + subfolders
+      if (path === '' && isRootLevel) {
+        // Root level - show only folders
+        const folders = data.filter(f => f.name.endsWith('/'));
+        renderRootFolders(folders);
+      } else {
+        // Subfolder level - show files and subfolders
+        const folders = data.filter(f => f.name.endsWith('/'));
+        const files = data.filter(f => !f.name.endsWith('/')).map(f => {
+          const fullFilePath = path ? `${path}/${f.name}` : f.name;
+          const publicUrl = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(fullFilePath).data.publicUrl;
+          return { 
+            name: f.name, 
+            fullPath: fullFilePath, 
+            size: f.size, 
+            publicUrl 
+          };
+        });
+        renderFolderContents(folders, files, path);
+      }
     }
 
-    function renderFiles(folders, files, currentPath) {
-      const q = $search.value.trim().toLowerCase();
-      let filteredFolders = folders;
-      let filteredFiles = files;
-
-      // If searching, filter from cache (search across all files)
-      if (q) {
-        const searchMatches = allFilesCache.filter(item => 
-          item.name.toLowerCase().includes(q)
-        );
-        filteredFiles = searchMatches;
-        filteredFolders = []; // Hide folders during search
-      }
-
-      if (filteredFolders.length === 0 && filteredFiles.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files match your search.</div>';
+    // Render ONLY folders at root level
+    function renderRootFolders(folders) {
+      $filesList.innerHTML = '';
+      
+      if (folders.length === 0) {
+        $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
         return;
       }
 
+      // Show folder count
+      const folderCount = document.createElement('div');
+      folderCount.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
+      folderCount.innerHTML = `<div style="font-weight:600;color:var(--accent)">📁 Folders (${folders.length})</div>`;
+      $filesList.appendChild(folderCount);
+
+      folders.forEach(folder => {
+        const folderName = folder.name.slice(0, -1); // Remove trailing '/'
+        const fullFolderPath = folder.name; // At root, path is just folder name
+        
+        const el = document.createElement('div');
+        el.className = 'folder';
+        el.innerHTML = `
+          <div style="flex: 1;">
+            <div style="font-weight:600">📁 ${escapeHtml(folderName)}</div>
+            <div class="meta">Folder</div>
+          </div>
+          <div class="actions">
+            <span style="color:var(--muted);font-size:12px">Click to enter</span>
+          </div>
+        `;
+        
+        el.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          navigateToFolder(fullFolderPath);
+        });
+        
+        $filesList.appendChild(el);
+      });
+    }
+
+    // Render files + subfolders inside folders
+    function renderFolderContents(folders, files, currentPath) {
       $filesList.innerHTML = '';
 
-      // Render folders first - FIXED: Prevent default link behavior
-      filteredFolders.forEach(folder => {
-        const folderName = folder.name.slice(0, -1); // Remove trailing '/'
+      // Show location info
+      const locationInfo = document.createElement('div');
+      locationInfo.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
+      locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${currentPath || 'Root'} (${files.length} files, ${folders.length} folders)</div>`;
+      $filesList.appendChild(locationInfo);
+
+      // Render subfolders first
+      folders.forEach(folder => {
+        const folderName = folder.name.slice(0, -1);
         const fullFolderPath = currentPath ? `${currentPath}/${folder.name}` : folder.name;
         
         const el = document.createElement('div');
@@ -257,26 +272,17 @@
           </div>
         `;
         
-        // FIXED: Proper click handler that prevents default behavior
         el.addEventListener('click', function(e) {
           e.preventDefault();
           e.stopPropagation();
-          console.log('Folder clicked:', fullFolderPath); // Debug
           navigateToFolder(fullFolderPath);
-        });
-        
-        // Prevent clicks on child elements from bubbling
-        el.querySelectorAll('*').forEach(child => {
-          child.addEventListener('click', function(e) {
-            e.stopPropagation();
-          });
         });
         
         $filesList.appendChild(el);
       });
 
-      // Render files - FIXED: Files open in new tab
-      filteredFiles.forEach(it => {
+      // Render files
+      files.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
         el.innerHTML = `
@@ -293,20 +299,15 @@
     }
 
     function updateBreadcrumb(path = '') {
-      // Update current location text
       if (!path) {
-        $currentLocation.textContent = 'Browse files available to authenticated users';
-      } else {
-        $currentLocation.textContent = `Current location: ${path}`;
-      }
-
-      if (!path) {
+        $currentLocation.textContent = 'Browse folders to view files';
         $currentPath.innerHTML = '';
         document.getElementById('backToRoot').textContent = '📁 Root';
         return;
       }
 
-      // Build breadcrumb from path
+      $currentLocation.textContent = `Inside: ${path}`;
+      
       const parts = path.split('/').filter(p => p);
       let breadcrumbHtml = '';
       let accumPath = '';
@@ -324,69 +325,9 @@
       document.getElementById('backToRoot').textContent = '📁 Root';
     }
 
-    // Event listeners
-    $search.addEventListener('input', debounce(() => {
-      if ($search.value.trim()) {
-        // Search mode - show global search results
-        renderSearchResults();
-      } else {
-        // Normal mode - show current folder
-        loadFiles(currentPath);
-      }
-    }, 300));
-
     $btnRefresh.addEventListener('click', () => {
       loadFiles(currentPath);
     });
-
-    // NEW: Render search results
-    function renderSearchResults() {
-      const q = $search.value.trim().toLowerCase();
-      const searchMatches = allFilesCache.filter(item => 
-        item.name.toLowerCase().includes(q)
-      );
-
-      $filesList.innerHTML = '';
-
-      if (searchMatches.length === 0) {
-        $filesList.innerHTML = '<div class="meta">No files match your search.</div>';
-        return;
-      }
-
-      // Show search header
-      const searchHeader = document.createElement('div');
-      searchHeader.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
-      searchHeader.innerHTML = `<div style="font-weight:600;color:var(--accent)">Search Results (${searchMatches.length})</div>`;
-      $filesList.appendChild(searchHeader);
-
-      searchMatches.forEach(it => {
-        const el = document.createElement('div');
-        el.className = 'file';
-        el.innerHTML = `
-          <div style="flex: 1;">
-            <div style="font-weight:600">📄 ${escapeHtml(it.name)}</div>
-            <div class="meta">${formatBytes(it.size)}</div>
-          </div>
-          <div class="actions">
-            <a href="${it.publicUrl}" target="_blank" rel="noopener noreferrer">Open</a>
-          </div>
-        `;
-        $filesList.appendChild(el);
-      });
-    }
-
-    // Debounce helper for search
-    function debounce(func, wait) {
-      let timeout;
-      return function executedFunction(...args) {
-        const later = () => {
-          clearTimeout(timeout);
-          func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-      };
-    }
 
     // Small helpers
     function formatBytes(bytes) {
