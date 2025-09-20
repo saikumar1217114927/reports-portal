@@ -90,7 +90,7 @@
 
     // State for folder navigation
     let currentPath = '';
-    let allFolders = []; // Cache all folders for root view
+    let allFolders = [];
 
     const $email = document.getElementById('email');
     const $password = document.getElementById('password');
@@ -112,8 +112,8 @@
         $btnSignIn.style.display = 'none';
         $btnSignUp.style.display = 'none';
         $breadcrumb.style.display = 'block';
-        currentPath = ''; // Reset to root
-        await loadRootFolders(); // Load only folders at root
+        currentPath = '';
+        await loadRootFolders();
       } else {
         $status.textContent = 'not signed in';
         $btnSignOut.style.display = 'none';
@@ -175,22 +175,27 @@
           return;
         }
 
-        // Detect folders by checking if they contain items
+        // FIXED: Simple folder detection - any item that has contents is a folder
         allFolders = [];
-        const folderPromises = data.map(async (item) => {
+        for (const item of data) {
+          console.log('Checking root item:', item.name); // Debug
+          
+          // If it ends with /, it's definitely a folder
           if (item.name.endsWith('/')) {
-            return { name: item.name, isFolder: true };
-          } else {
-            const { data: contents, error: checkError } = await supabase.storage.from(STORAGE_BUCKET).list(item.name, { limit: 1 });
-            if (!checkError && contents && contents.length > 0) {
-              return { name: item.name + '/', isFolder: true };
-            }
-            return null;
+            allFolders.push({ name: item.name, isFolder: true });
+            continue;
           }
-        });
+          
+          // Check if it has contents (is actually a folder)
+          const { data: contents, error: checkError } = await supabase.storage.from(STORAGE_BUCKET).list(item.name, { limit: 1 });
+          console.log(`Contents of ${item.name}:`, contents?.length || 0); // Debug
+          
+          if (!checkError && contents && contents.length > 0) {
+            allFolders.push({ name: item.name, isFolder: true });
+          }
+        }
 
-        const results = await Promise.all(folderPromises);
-        allFolders = results.filter(folder => folder && folder.isFolder);
+        console.log('Found folders:', allFolders); // Debug
 
         if (allFolders.length === 0) {
           $filesList.innerHTML = '<div class="meta">No folders found. Create folders in Supabase Storage.</div>';
@@ -207,21 +212,27 @@
 
     // Navigate to folder - stays in UI
     window.navigateToFolder = async function(path) {
-      currentPath = path.endsWith('/') ? path : path + '/';
+      currentPath = path.endsWith('/') ? path.slice(0, -1) : path; // Remove trailing slash for consistency
+      console.log('Navigating to path:', currentPath); // Debug
       await loadFolderContents(currentPath);
       updateBreadcrumb(currentPath);
     };
 
-    // FIXED: Load contents of a specific folder - proper URL encoding
+    // FIXED: Load contents of a specific folder - proper detection
     async function loadFolderContents(path) {
       $filesList.innerHTML = '<div class="meta">Loading folder contents...</div>';
       
+      console.log('Loading contents of:', path); // Debug
+      
+      // FIXED: List without trailing slash
       const { data, error } = await supabase.storage.from(STORAGE_BUCKET).list(path, { limit: 1000 });
       if (error) {
         $filesList.innerHTML = '<div class="meta">Error loading folder: ' + error.message + '</div>';
         console.error('Load folder error:', error);
         return;
       }
+      
+      console.log('Raw folder contents:', data); // Debug
       
       if (!data || data.length === 0) {
         $filesList.innerHTML = '<div class="meta">This folder is empty.</div>';
@@ -231,39 +242,54 @@
       const folders = [];
       const files = [];
       
-      // Process items
+      // Process each item in the folder
       for (const item of data) {
+        console.log('Processing item:', item.name); // Debug
+        
         if (item.name.endsWith('/')) {
-          folders.push({ name: item.name.slice(0, -1), fullPath: path + item.name });
+          // This is a subfolder
+          const folderName = item.name.slice(0, -1);
+          folders.push({ 
+            name: folderName, 
+            fullPath: `${path}/${folderName}` 
+          });
         } else {
-          // Check if this is a subfolder
-          const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(`${path}${item.name}/`, { limit: 1 });
+          // FIXED: Check if this item contains other items (is a subfolder)
+          // Don't add trailing slash when checking
+          const { data: contents } = await supabase.storage.from(STORAGE_BUCKET).list(`${path}/${item.name}`, { limit: 1 });
+          
           if (contents && contents.length > 0) {
-            folders.push({ name: item.name, fullPath: `${path}${item.name}/` });
+            // This is a subfolder
+            folders.push({ 
+              name: item.name, 
+              fullPath: `${path}/${item.name}` 
+            });
           } else {
-            // This is a file - FIXED: Proper URL construction
-            const fullFilePath = `${path}${item.name}`;
+            // This is definitely a file
+            const fullFilePath = `${path}/${item.name}`;
             
-            // FIXED: Construct the direct public URL manually with proper encoding
-            const encodedPath = encodeURIComponent(fullFilePath);
-            const directUrl = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${encodedPath}`;
+            // FIXED: Use getPublicUrl with proper encoding
+            const { data: urlData } = supabase.storage
+              .from(STORAGE_BUCKET)
+              .getPublicUrl(fullFilePath);
             
-            console.log('File URL for', fullFilePath, '->', directUrl); // Debug log
+            console.log('File detected:', fullFilePath, 'URL:', urlData.publicUrl); // Debug
             
             files.push({ 
               name: item.name, 
               fullPath: fullFilePath, 
-              size: 0, // We'll show "File" instead of size
-              publicUrl: directUrl 
+              size: 0,
+              publicUrl: urlData.publicUrl 
             });
           }
         }
       }
 
+      console.log('Folders found:', folders.length, 'Files found:', files.length); // Debug
+
       renderFolderContents(folders, files, path);
     }
 
-    // Render ONLY folders at root level
     function renderRootFolders(folders) {
       $filesList.innerHTML = '';
       
@@ -279,7 +305,7 @@
 
       folders.forEach(folder => {
         const displayName = folder.name.endsWith('/') ? folder.name.slice(0, -1) : folder.name;
-        const fullPath = folder.fullPath || folder.name + '/';
+        const fullPath = folder.name.endsWith('/') ? folder.name : folder.name + '/';
         
         const el = document.createElement('div');
         el.className = 'folder';
@@ -296,7 +322,7 @@
         el.addEventListener('click', function(e) {
           e.preventDefault();
           e.stopPropagation();
-          console.log('Entering folder:', fullPath);
+          console.log('Entering root folder:', fullPath);
           navigateToFolder(fullPath);
         });
         
@@ -308,11 +334,10 @@
       });
     }
 
-    // FIXED: Render files + subfolders inside folders - proper URLs
     function renderFolderContents(folders, files, currentPath) {
       $filesList.innerHTML = '';
 
-      const displayPath = currentPath.endsWith('/') ? currentPath.slice(0, -1) : currentPath;
+      const displayPath = currentPath;
       const locationInfo = document.createElement('div');
       locationInfo.style.cssText = 'padding:10px;border-bottom:1px solid rgba(255,255,255,.03);margin-bottom:10px;';
       locationInfo.innerHTML = `<div style="font-weight:600;color:var(--accent)">📂 ${escapeHtml(displayPath)} (${files.length} files, ${folders.length} folders)</div>`;
@@ -345,7 +370,7 @@
         $filesList.appendChild(el);
       });
 
-      // FIXED: Render files with properly encoded URLs
+      // Render files
       files.forEach(it => {
         const el = document.createElement('div');
         el.className = 'file';
@@ -359,7 +384,6 @@
           </div>
         `;
         
-        // Add click handler to test URL (for debugging)
         el.querySelector('a').addEventListener('click', function(e) {
           console.log('Opening file:', it.fullPath);
           console.log('Using URL:', it.publicUrl);
@@ -379,8 +403,7 @@
 
       $currentLocation.textContent = `Inside: ${path}`;
       
-      const displayPath = path.endsWith('/') ? path.slice(0, -1) : path;
-      const parts = displayPath.split('/').filter(p => p);
+      const parts = path.split('/').filter(p => p);
       let breadcrumbHtml = '';
       let accumPath = '';
       
@@ -389,7 +412,7 @@
         if (i === parts.length - 1) {
           breadcrumbHtml += `<span>${escapeHtml(part)}</span>`;
         } else {
-          breadcrumbHtml += `<span onclick="navigateToFolder('${accumPath}')">${escapeHtml(part)}</span> > `;
+          breadcrumbHtml += `<span onclick="navigateToFolder('${accumPath.slice(0, -1)}')">${escapeHtml(part)}</span> > `;
         }
       });
       
